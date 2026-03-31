@@ -10,15 +10,13 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"gioui.org/app"
 	"gioui.org/font/gofont"
-	"gioui.org/io/clipboard"
-	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -77,11 +75,12 @@ func main() {
 	ensureFilesExist()
 
 	go func() {
-		window := app.NewWindow(
+		w := new(app.Window)
+		w.Option(
 			app.Title("DNStoHOSTS"),
 			app.Size(unit.Dp(800), unit.Dp(600)),
 		)
-		err := runLoop(window)
+		err := runLoop(w)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -118,12 +117,11 @@ func runLoop(w *app.Window) error {
 
 	var ops op.Ops
 	for {
-		e := w.NextEvent()
-		switch e := e.(type) {
-		case system.DestroyEvent:
+		switch e := w.Event().(type) {
+		case app.DestroyEvent:
 			return e.Err
-		case system.FrameEvent:
-			gtx := layout.NewContext(&ops, e)
+		case app.FrameEvent:
+			gtx := app.NewContext(&ops, e)
 			application.handleEvents(gtx)
 			application.layout(gtx)
 			e.Frame(gtx.Ops)
@@ -141,7 +139,16 @@ func (a *Application) handleEvents(gtx layout.Context) {
 		os.WriteFile(settingsFile, []byte(a.editorSettings.Text()), 0644)
 	}
 	if a.btnCopy.Clicked(gtx) {
-		clipboard.WriteOp{Text: a.editorSettings.Text()}.Add(gtx.Ops)
+		// Native Windows clipboard copy to avoid Gio API version issues
+		cmd := exec.Command("clip")
+		in, err := cmd.StdinPipe()
+		if err == nil {
+			go func() {
+				defer in.Close()
+				io.WriteString(in, a.editorSettings.Text())
+				cmd.Run()
+			}()
+		}
 	}
 	if a.btnClear.Clicked(gtx) {
 		a.editorSettings.SetText("")
@@ -190,7 +197,6 @@ func (a *Application) addLog(msg string) {
 	line := fmt.Sprintf("[%s] %s\n", timestamp, msg)
 	a.logText += line
 	a.editorLog.SetText(a.logText)
-	a.editorLog.ScrollToEnd()
 	a.window.Invalidate()
 }
 
@@ -283,7 +289,7 @@ func (a *Application) layoutLogViewer(gtx layout.Context) layout.Dimensions {
 
 	ed := material.Editor(a.theme, &a.editorLog, "")
 	ed.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
-	
+
 	return layout.UniformInset(unit.Dp(4)).Layout(gtx, ed.Layout)
 }
 
@@ -410,14 +416,14 @@ func (a *Application) runResolver(ctx context.Context) {
 		// It's a domain
 		domainIndex++
 		a.addLog(fmt.Sprintf("Resolving: %s", line))
-		
+
 		// Calculate progress
 		if domainCount > 0 {
 			a.setProgress(float32(domainIndex)/float32(domainCount), 1)
 		}
 
 		var ips []string
-		
+
 		if ipv4 {
 			res, err := resolveDoH(server, port, line, dns.TypeA)
 			if err == nil {
