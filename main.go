@@ -77,42 +77,42 @@ type AppState struct {
 	mu sync.Mutex
 
 	// Window & Theme
-	window       *app.Window
-	theme        *material.Theme
-	themeMode    ThemeMode
-	ThemeBtn     widget.Clickable
+	window    *app.Window
+	theme     *material.Theme
+	themeMode ThemeMode
+	ThemeBtn  widget.Clickable
 
 	// Tabs
-	currentTab   TabMode
-	TabLogBtn    widget.Clickable
-	TabInputBtn  widget.Clickable
-	TabSetBtn    widget.Clickable
+	currentTab  TabMode
+	TabLogBtn   widget.Clickable
+	TabInputBtn widget.Clickable
+	TabSetBtn   widget.Clickable
 
 	// Buttons (Log)
-	StartBtn     widget.Clickable
-	StopBtn      widget.Clickable
-	ClearLogBtn  widget.Clickable
+	StartBtn    widget.Clickable
+	StopBtn     widget.Clickable
+	ClearLogBtn widget.Clickable
 
 	// Buttons (Editor)
-	CancelBtn    widget.Clickable
-	SaveBtn      widget.Clickable
-	CopyBtn      widget.Clickable
-	ClearBtn     widget.Clickable
-	ResetDNSBtn  widget.Clickable // Only for settings
+	CancelBtn   widget.Clickable
+	SaveBtn     widget.Clickable
+	CopyBtn     widget.Clickable
+	ClearBtn    widget.Clickable
+	ResetDNSBtn widget.Clickable // Only for settings
 
 	// Editors
-	inputEditor  widget.Editor
-	settingsEd   widget.Editor
+	inputEditor widget.Editor
+	settingsEd  widget.Editor
 
 	// Log List
-	logList      widget.List
+	logList    widget.List
 	logEntries[]string
 
 	// Runner State
-	isRunning      bool
-	cancelFunc     context.CancelFunc
-	progress       float32
-	progressState  ProgressState
+	isRunning     bool
+	cancelFunc    context.CancelFunc
+	progress      float32
+	progressState ProgressState
 }
 
 func main() {
@@ -154,7 +154,7 @@ func run(w *app.Window) error {
 		progressState: ProgressIdle,
 		logEntries:[]string{},
 	}
-	
+
 	state.logList.Axis = layout.Vertical
 	state.inputEditor.Submit = false
 	state.settingsEd.Submit = false
@@ -193,8 +193,8 @@ func (s *AppState) applyThemeColors() {
 	if s.themeMode == ThemeDark {
 		s.theme.Bg = hex2color("#202020")
 		s.theme.Fg = hex2color("#FFFFFF")
-		s.theme.ContrastBg = hex2color("#333333") // Button bg
-		s.theme.ContrastFg = hex2color("#FFFFFF") // Button fg
+		s.theme.ContrastBg = hex2color("#333333")
+		s.theme.ContrastFg = hex2color("#FFFFFF")
 	} else {
 		s.theme.Bg = hex2color("#FFFFFF")
 		s.theme.Fg = hex2color("#000000")
@@ -216,8 +216,7 @@ func (s *AppState) appendLog(msg string) {
 	defer s.mu.Unlock()
 	ts := time.Now().Format("15:04:05")
 	s.logEntries = append(s.logEntries, fmt.Sprintf("[%s] %s", ts, msg))
-	// Auto-scroll to bottom by forcing the list layout to the end
-	s.logList.Position.BeforeEnd = false
+	s.logList.Position.First = len(s.logEntries) // Auto-scroll
 	s.window.Invalidate()
 }
 
@@ -250,9 +249,15 @@ func (s *AppState) handleEvents(gtx layout.Context) {
 		s.applyThemeColors()
 	}
 
-	if s.TabLogBtn.Clicked(gtx) { s.currentTab = TabLog }
-	if s.TabInputBtn.Clicked(gtx) { s.currentTab = TabInput }
-	if s.TabSetBtn.Clicked(gtx) { s.currentTab = TabSettings }
+	if s.TabLogBtn.Clicked(gtx) {
+		s.currentTab = TabLog
+	}
+	if s.TabInputBtn.Clicked(gtx) {
+		s.currentTab = TabInput
+	}
+	if s.TabSetBtn.Clicked(gtx) {
+		s.currentTab = TabSettings
+	}
 
 	// Log Buttons
 	if s.StartBtn.Clicked(gtx) && !s.isRunning {
@@ -320,7 +325,7 @@ func (s *AppState) layout(gtx layout.Context) layout.Dimensions {
 			}
 			return layout.Dimensions{}
 		}),
-		// Bottom Progress bar (Only visible/active in log, but exists globally)
+		// Bottom Progress bar
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return s.layoutProgressBar(gtx)
 		}),
@@ -344,7 +349,9 @@ func (s *AppState) layoutTopBar(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						themeText := "Dark Theme"
-						if s.themeMode == ThemeLight { themeText = "Light Theme" }
+						if s.themeMode == ThemeLight {
+							themeText = "Light Theme"
+						}
 						btn := material.Button(s.theme, &s.ThemeBtn, themeText)
 						return btn.Layout(gtx)
 					}),
@@ -357,28 +364,34 @@ func (s *AppState) layoutTopBar(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							btn := material.Button(s.theme, &s.StartBtn, "Start")
-							if s.isRunning { gtx = gtx.Disabled() }
+							if s.isRunning {
+								gtx = gtx.Disabled()
+							}
 							return btn.Layout(gtx)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							btn := material.Button(s.theme, &s.StopBtn, "Stop")
-							if !s.isRunning { gtx = gtx.Disabled() }
+							if !s.isRunning {
+								gtx = gtx.Disabled()
+							}
 							return btn.Layout(gtx)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							btn := material.Button(s.theme, &s.ClearLogBtn, "Clear Log")
-							if s.isRunning { gtx = gtx.Disabled() }
+							if s.isRunning {
+								gtx = gtx.Disabled()
+							}
 							return btn.Layout(gtx)
 						}),
 					)
 				} else {
 					// Editor Toolbar
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-						layout.Rigid(s.drawButton(gtx, &s.SaveBtn, "Save", false)),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 						layout.Rigid(s.drawButton(gtx, &s.CancelBtn, "Cancel", false)),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Rigid(s.drawButton(gtx, &s.SaveBtn, "Save", false)),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 						layout.Rigid(s.drawButton(gtx, &s.CopyBtn, "Copy", false)),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
@@ -418,12 +431,11 @@ func (s *AppState) drawButton(gtx layout.Context, clk *widget.Clickable, txt str
 }
 
 func (s *AppState) layoutLogArea(gtx layout.Context) layout.Dimensions {
-	// Slight background difference for log
-	bgColor := hex2color("#1E1E1E") // Dark log
+	bgColor := hex2color("#1E1E1E")
 	if s.themeMode == ThemeLight {
-		bgColor = hex2color("#F5F5F5") // Light log
+		bgColor = hex2color("#F5F5F5")
 	}
-	
+
 	paint.FillShape(gtx.Ops, bgColor, clip.Rect{Max: gtx.Constraints.Max}.Op())
 
 	margins := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}
@@ -438,7 +450,6 @@ func (s *AppState) layoutLogArea(gtx layout.Context) layout.Dimensions {
 			textLine := s.logEntries[index]
 			s.mu.Unlock()
 			label := material.Label(s.theme, unit.Sp(14), textLine)
-			// Apply monospace font like styling by using default but forcing strict sizes could be done here
 			return label.Layout(gtx)
 		})
 	})
@@ -466,32 +477,38 @@ func (s *AppState) layoutProgressBar(gtx layout.Context) layout.Dimensions {
 	s.mu.Unlock()
 
 	var barColor color.NRGBA
+	var bgBarColor color.NRGBA
+
 	switch st {
 	case ProgressIdle:
-		barColor = hex2color("#808080") // Gray
+		barColor = hex2color("#808080")   // Gray
+		bgBarColor = hex2color("#808080") // Full Gray
 	case ProgressRunning:
-		barColor = hex2color("#0078D7") // Blue
+		barColor = hex2color("#0078D7")   // Blue Progress
+		bgBarColor = hex2color("#404040") // Dark background during progress
 	case ProgressDone:
-		barColor = hex2color("#28A745") // Green
+		barColor = hex2color("#28A745")   // Green
+		bgBarColor = hex2color("#28A745") // Full Green
 	}
 
 	return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		width := gtx.Constraints.Max.X
 		fillWidth := int(float32(width) * p)
-		if st == ProgressIdle {
-			fillWidth = width // Fill completely with gray when idle
+
+		if st == ProgressIdle || st == ProgressDone {
+			fillWidth = width
 		}
 
-		// Draw background (light gray)
 		bgRect := clip.Rect{Max: layout.Dimensions{Size: gtx.Constraints.Max}.Size}
 		bgRect.Max.Y = height
-		paint.FillShape(gtx.Ops, hex2color("#404040"), bgRect.Op())
+		paint.FillShape(gtx.Ops, bgBarColor, bgRect.Op())
 
-		// Draw foreground progress
-		fgRect := clip.Rect{Max: layout.Dimensions{Size: gtx.Constraints.Max}.Size}
-		fgRect.Max.Y = height
-		fgRect.Max.X = fillWidth
-		paint.FillShape(gtx.Ops, barColor, fgRect.Op())
+		if st == ProgressRunning {
+			fgRect := clip.Rect{Max: layout.Dimensions{Size: gtx.Constraints.Max}.Size}
+			fgRect.Max.Y = height
+			fgRect.Max.X = fillWidth
+			paint.FillShape(gtx.Ops, barColor, fgRect.Op())
+		}
 
 		return layout.Dimensions{Size: bgRect.Max}
 	})
@@ -509,7 +526,7 @@ type Settings struct {
 func parseSettings() Settings {
 	setBytes, _ := os.ReadFile(SettingsFile)
 	lines := strings.Split(string(setBytes), "\n")
-	
+
 	settings := Settings{
 		Server: "dns.google",
 		Port:   "",
@@ -530,10 +547,14 @@ func parseSettings() Settings {
 		val := strings.TrimSpace(parts[1])
 
 		switch key {
-		case "server": settings.Server = val
-		case "port": settings.Port = val
-		case "ipv4": settings.IPv4 = (val == "true")
-		case "ipv6": settings.IPv6 = (val == "true")
+		case "server":
+			settings.Server = val
+		case "port":
+			settings.Port = val
+		case "ipv4":
+			settings.IPv4 = (val == "true")
+		case "ipv6":
+			settings.IPv6 = (val == "true")
 		}
 	}
 	return settings
@@ -562,11 +583,11 @@ func (s *AppState) startResolving() {
 
 		s.appendLog("Starting to resolve domains...")
 		s.appendLog("Reading settings.txt...")
-		
+
 		cfg := parseSettings()
 		s.appendLog(fmt.Sprintf("DNS Server: %s", cfg.Server))
 		s.appendLog(fmt.Sprintf("IPv4: %t, IPv6: %t", cfg.IPv4, cfg.IPv6))
-		
+
 		s.appendLog("Reading input.txt...")
 		inputBytes, err := os.ReadFile(InputFile)
 		if err != nil {
@@ -575,8 +596,7 @@ func (s *AppState) startResolving() {
 		}
 
 		lines := strings.Split(string(inputBytes), "\n")
-		
-		// Count actual domains for progress
+
 		var totalDomains int
 		for _, line := range lines {
 			l := strings.TrimSpace(line)
@@ -614,7 +634,7 @@ func (s *AppState) startResolving() {
 			s.appendLog("Resolving: " + domain)
 
 			ips := resolveDomainDoH(ctx, cfg, domain)
-			
+
 			if len(ips) == 0 {
 				s.appendLog(fmt.Sprintf("  No records found for %s", domain))
 				outputLines = append(outputLines, fmt.Sprintf("No records found: %s", domain))
@@ -633,7 +653,7 @@ func (s *AppState) startResolving() {
 
 		s.appendLog("----------------------------------------")
 		s.appendLog("Writing output.txt...")
-		
+
 		outText := strings.Join(outputLines, "\n")
 		err = os.WriteFile(OutputFile,[]byte(outText), 0644)
 		if err != nil {
@@ -655,5 +675,6 @@ func resolveDomainDoH(ctx context.Context, cfg Settings, domain string) []string
 	urlStr += "/dns-query"
 
 	client := &http.Client{Timeout: 5 * time.Second}
+	fqdn := dns.Fqdn(domain)
 
-	queries :=
+	var qTypes
