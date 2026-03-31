@@ -58,8 +58,8 @@ jobs:
           GOOS: windows
           GOARCH: amd64
         run: |
-          # Инициализируем go.mod, если его нет
-          if[ ! -f go.mod ]; then
+          # Инициализируем go.mod, если его нет (обрати внимание на пробел после if)
+          if [ ! -f go.mod ]; then
             go mod init DNStoHOSTS
           fi
           # Скачиваем все зависимости
