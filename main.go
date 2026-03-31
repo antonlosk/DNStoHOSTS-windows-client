@@ -88,14 +88,13 @@ func main() {
 }
 
 func ensureFilesExist() {
-	// Create input.txt if not exists
 	if _, err := os.Stat("input.txt"); os.IsNotExist(err) {
 		content := "# Google\ngoogle.com\n"
 		os.WriteFile("input.txt", []byte(content), 0644)
 	}
 
-	// Create settings.txt with #port=443 if not exists
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
+		// Добавлен #port=443
 		content := "server=dns.google\n#port=443\nipv4=true\nipv6=false\n"
 		os.WriteFile("settings.txt", []byte(content), 0644)
 	}
@@ -142,7 +141,7 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 	if ui.BtnStop.Clicked(gtx) && ui.State == StateResolving {
 		if ui.CancelFunc != nil {
 			ui.CancelFunc()
-			ui.addLog("Stopping process...")
+			ui.addLog("Stopping...")
 		}
 	}
 
@@ -287,7 +286,7 @@ func openFile(fn string) {
 }
 
 func (ui *UI) startResolving(ctx context.Context) {
-	ui.addLog("Starting resolution process...")
+	ui.addLog("Process started...")
 	cfg := loadSettings()
 	
 	lines, err := readLines("input.txt")
@@ -306,7 +305,7 @@ func (ui *UI) startResolving(ctx context.Context) {
 	for _, line := range lines {
 		select {
 		case <-ctx.Done():
-			ui.addLog("Operation cancelled.")
+			ui.addLog("Cancelled.")
 			ui.finish(StateIdle)
 			return
 		default:
@@ -326,18 +325,19 @@ func (ui *UI) startResolving(ctx context.Context) {
 		if cfg.IPv6 { found = append(found, resolveBinaryDoH(ctx, httpClient, dohURL, trimmed, dns.TypeAAAA)...) }
 
 		if len(found) == 0 {
-			ui.addLog("   No records found for " + trimmed)
-			output = append(output, "# No records found: "+trimmed)
+			ui.addLog("   Not found: " + trimmed)
+			output = append(output, "# Not found: "+trimmed)
 		} else {
 			for _, ip := range found {
 				ui.addLog("   Found: " + ip)
-				output = append(output, fmt.Sprintf("%-15s %s", ip, trimmed))
+				// Исправлено: теперь строго один пробел между IP и доменом
+				output = append(output, fmt.Sprintf("%s %s", ip, trimmed))
 			}
 		}
 	}
 
 	writeLines("output.txt", output)
-	ui.addLog("Process complete. Results saved to output.txt")
+	ui.addLog("Results saved to output.txt")
 	ui.finish(StateDone)
 }
 
