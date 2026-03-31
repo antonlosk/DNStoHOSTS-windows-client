@@ -76,39 +76,32 @@ const (
 type AppState struct {
 	mu sync.Mutex
 
-	// Window & Theme
 	window    *app.Window
 	theme     *material.Theme
 	themeMode ThemeMode
 	ThemeBtn  widget.Clickable
 
-	// Tabs
 	currentTab  TabMode
 	TabLogBtn   widget.Clickable
 	TabInputBtn widget.Clickable
 	TabSetBtn   widget.Clickable
 
-	// Buttons (Log)
 	StartBtn    widget.Clickable
 	StopBtn     widget.Clickable
 	ClearLogBtn widget.Clickable
 
-	// Buttons (Editor)
 	CancelBtn   widget.Clickable
 	SaveBtn     widget.Clickable
 	CopyBtn     widget.Clickable
 	ClearBtn    widget.Clickable
-	ResetDNSBtn widget.Clickable // Only for settings
+	ResetDNSBtn widget.Clickable
 
-	// Editors
 	inputEditor widget.Editor
 	settingsEd  widget.Editor
 
-	// Log List
 	logList    widget.List
 	logEntries[]string
 
-	// Runner State
 	isRunning     bool
 	cancelFunc    context.CancelFunc
 	progress      float32
@@ -176,7 +169,6 @@ func run(w *app.Window) error {
 	}
 }
 
-// --- Hex Color Helper ---
 func hex2color(hex string) color.NRGBA {
 	var r, g, b, a uint8
 	a = 255
@@ -216,7 +208,7 @@ func (s *AppState) appendLog(msg string) {
 	defer s.mu.Unlock()
 	ts := time.Now().Format("15:04:05")
 	s.logEntries = append(s.logEntries, fmt.Sprintf("[%s] %s", ts, msg))
-	s.logList.Position.First = len(s.logEntries) // Auto-scroll
+	s.logList.Position.First = len(s.logEntries)
 	s.window.Invalidate()
 }
 
@@ -236,8 +228,6 @@ func (s *AppState) setProgress(p float32, state ProgressState) {
 	s.progressState = state
 	s.window.Invalidate()
 }
-
-// --- Event Handling ---
 
 func (s *AppState) handleEvents(gtx layout.Context) {
 	if s.ThemeBtn.Clicked(gtx) {
@@ -259,7 +249,6 @@ func (s *AppState) handleEvents(gtx layout.Context) {
 		s.currentTab = TabSettings
 	}
 
-	// Log Buttons
 	if s.StartBtn.Clicked(gtx) && !s.isRunning {
 		s.startResolving()
 	}
@@ -273,7 +262,6 @@ func (s *AppState) handleEvents(gtx layout.Context) {
 		s.clearLog()
 	}
 
-	// Editor Buttons
 	if s.CancelBtn.Clicked(gtx) {
 		s.loadEditorsFromFiles()
 	}
@@ -305,15 +293,11 @@ func (s *AppState) handleEvents(gtx layout.Context) {
 	}
 }
 
-// --- Layouts ---
-
 func (s *AppState) layout(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Top Bar
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return s.layoutTopBar(gtx)
 		}),
-		// Content Area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			switch s.currentTab {
 			case TabLog:
@@ -325,7 +309,6 @@ func (s *AppState) layout(gtx layout.Context) layout.Dimensions {
 			}
 			return layout.Dimensions{}
 		}),
-		// Bottom Progress bar
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return s.layoutProgressBar(gtx)
 		}),
@@ -359,7 +342,6 @@ func (s *AppState) layoutTopBar(gtx layout.Context) layout.Dimensions {
 			}),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				// Toolbar changes based on tab
 				if s.currentTab == TabLog {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -387,7 +369,6 @@ func (s *AppState) layoutTopBar(gtx layout.Context) layout.Dimensions {
 						}),
 					)
 				} else {
-					// Editor Toolbar
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Rigid(s.drawButton(gtx, &s.CancelBtn, "Cancel", false)),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
@@ -413,7 +394,7 @@ func (s *AppState) layoutTopBar(gtx layout.Context) layout.Dimensions {
 func (s *AppState) drawTabButton(gtx layout.Context, clk *widget.Clickable, txt string, active bool) layout.Dimensions {
 	btn := material.Button(s.theme, clk, txt)
 	if active {
-		btn.Background = hex2color("#0078D7") // Windows 10 Blue
+		btn.Background = hex2color("#0078D7")
 		btn.Color = hex2color("#FFFFFF")
 	} else {
 		btn.Background = s.theme.ContrastBg
@@ -481,14 +462,14 @@ func (s *AppState) layoutProgressBar(gtx layout.Context) layout.Dimensions {
 
 	switch st {
 	case ProgressIdle:
-		barColor = hex2color("#808080")   // Gray
-		bgBarColor = hex2color("#808080") // Full Gray
+		barColor = hex2color("#808080")
+		bgBarColor = hex2color("#808080")
 	case ProgressRunning:
-		barColor = hex2color("#0078D7")   // Blue Progress
-		bgBarColor = hex2color("#404040") // Dark background during progress
+		barColor = hex2color("#0078D7")
+		bgBarColor = hex2color("#404040")
 	case ProgressDone:
-		barColor = hex2color("#28A745")   // Green
-		bgBarColor = hex2color("#28A745") // Full Green
+		barColor = hex2color("#28A745")
+		bgBarColor = hex2color("#28A745")
 	}
 
 	return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
