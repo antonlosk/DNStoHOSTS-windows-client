@@ -58,7 +58,14 @@ jobs:
           GOOS: windows
           GOARCH: amd64
         run: |
-          # Build with optimization flags and append version to the filename
+          # Инициализируем go.mod, если его нет
+          if[ ! -f go.mod ]; then
+            go mod init DNStoHOSTS
+          fi
+          # Скачиваем все зависимости
+          go mod tidy
+          
+          # Собираем с флагом -H=windowsgui (чтобы скрыть черную консоль) и оптимизациями
           go build -ldflags="-H=windowsgui -s -w" -trimpath -o DNStoHOSTS_${{ steps.version.outputs.version }}.exe main.go
 
       - name: Create GitHub Release
