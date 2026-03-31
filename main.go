@@ -494,18 +494,7 @@ func (s *AppState) startResolving() {
 		}
 	}()
 }
-
-func resolveDomainDoH(ctx context.Context, cfg Settings, domain string)[]string {
-	var ips[]string
-	urlStr := "https://" + cfg.Server
-	if cfg.Port != "" { urlStr += ":" + cfg.Port }
-	urlStr += "/dns-query"
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	fqdn := dns.Fqdn(domain)
-
-	var qTypes
-	func resolveDomainDoH(ctx context.Context, cfg Settings, domain string) []string {
+func resolveDomainDoH(ctx context.Context, cfg Settings, domain string) []string {
 	var ips[]string
 	urlStr := "https://" + cfg.Server
 	if cfg.Port != "" {
@@ -516,59 +505,4 @@ func resolveDomainDoH(ctx context.Context, cfg Settings, domain string)[]string 
 	client := &http.Client{Timeout: 10 * time.Second}
 	fqdn := dns.Fqdn(domain)
 
-	var qTypes[]uint16
-	if cfg.IPv4 {
-		qTypes = append(qTypes, dns.TypeA)
-	}
-	if cfg.IPv6 {
-		qTypes = append(qTypes, dns.TypeAAAA)
-	}
-
-	for _, qType := range qTypes {
-		m := new(dns.Msg)
-		m.SetQuestion(fqdn, qType)
-		m.RecursionDesired = true
-
-		// Упаковываем запрос в бинарный формат (RFC 1035)
-		wire, err := m.Pack()
-		if err != nil {
-			continue
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(wire))
-		if err != nil {
-			continue
-		}
-		// Устанавливаем правильные заголовки для DoH (RFC 8484)
-		req.Header.Set("Content-Type", "application/dns-message")
-		req.Header.Set("Accept", "application/dns-message")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil || resp.StatusCode != http.StatusOK {
-			continue
-		}
-
-		// Распаковываем бинарный ответ
-		msg := new(dns.Msg)
-		if err := msg.Unpack(body); err != nil {
-			continue
-		}
-
-		// Извлекаем IP адреса из секции Answer
-		for _, ans := range msg.Answer {
-			if a, ok := ans.(*dns.A); ok {
-				ips = append(ips, a.A.String())
-			} else if aaaa, ok := ans.(*dns.AAAA); ok {
-				ips = append(ips, aaaa.AAAA.String())
-			}
-		}
-	}
-
-	return ips
-}
+	var qTypes
