@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,6 @@ import (
 	"github.com/miekg/dns"
 )
 
-// AppState represents the current execution state
 type AppState int
 
 const (
@@ -35,7 +35,6 @@ const (
 	StateDone
 )
 
-// UI holds all the UI state and widgets
 type UI struct {
 	Theme        *material.Theme
 	IsDarkMode   bool
@@ -59,7 +58,6 @@ type UI struct {
 	Window       *app.Window
 }
 
-// Config represents the settings.txt configuration
 type Config struct {
 	Server string
 	Port   string
@@ -71,7 +69,6 @@ func main() {
 	ensureFilesExist()
 
 	go func() {
-		// New Window API in modern Gio
 		w := new(app.Window)
 		w.Option(
 			app.Title("DNStoHOSTS"),
@@ -88,13 +85,11 @@ func main() {
 }
 
 func ensureFilesExist() {
-	// input.txt
 	if _, err := os.Stat("input.txt"); os.IsNotExist(err) {
 		content := "# Google\ngoogle.com\n"
 		os.WriteFile("input.txt", []byte(content), 0644)
 	}
 
-	// settings.txt
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
 		content := "server=dns.google\n#port=443\nipv4=true\nipv6=false\n"
 		os.WriteFile("settings.txt", []byte(content), 0644)
@@ -102,17 +97,14 @@ func ensureFilesExist() {
 }
 
 func drawWindow(w *app.Window) error {
-	// Modern Gio material theme automatically includes Go fonts
 	th := material.NewTheme()
-
 	ui := &UI{
 		Theme:      th,
 		IsDarkMode: true,
 		Window:     w,
 		State:      StateIdle,
 	}
-	ui.ThemeToggle.Value = true // Default to dark mode
-
+	ui.ThemeToggle.Value = true
 	ui.LogList.Axis = layout.Vertical
 
 	var ops op.Ops
@@ -148,7 +140,6 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 		if ui.State == StateResolving && ui.CancelFunc != nil {
 			ui.addLog("Stop requested, waiting for current operation to complete...")
 			ui.CancelFunc()
-			ui.CancelFunc = nil
 		}
 	}
 
@@ -160,35 +151,22 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 		ui.Window.Invalidate()
 	}
 
-	if ui.BtnInput.Clicked(gtx) {
-		openFile("input.txt")
-	}
-	if ui.BtnSettings.Clicked(gtx) {
-		openFile("settings.txt")
-	}
-	if ui.BtnOutput.Clicked(gtx) {
-		openFile("output.txt")
-	}
+	if ui.BtnInput.Clicked(gtx) { openFile("input.txt") }
+	if ui.BtnSettings.Clicked(gtx) { openFile("settings.txt") }
+	if ui.BtnOutput.Clicked(gtx) { openFile("output.txt") }
 }
 
 func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	ui.updateTheme()
-
-	// Update animation for indeterminate progress bar
 	if ui.State == StateResolving {
 		ui.ProgressAnim += 0.03
-		if ui.ProgressAnim > math.Pi*2 {
-			ui.ProgressAnim = 0
-		}
-		// Trigger the next frame for smooth animation
+		if ui.ProgressAnim > math.Pi*2 { ui.ProgressAnim = 0 }
 		ui.Window.Invalidate()
 	}
 
-	// Main background
 	paint.Fill(gtx.Ops, ui.Theme.Bg)
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Top controls
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
@@ -196,11 +174,8 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								btn := material.Button(ui.Theme, &ui.BtnStart, "Start")
-								if ui.State == StateResolving {
-									btn.Background = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-								} else {
-									btn.Background = color.NRGBA{R: 0, G: 150, B: 0, A: 255}
-								}
+								btn.Background = color.NRGBA{G: 150, A: 255}
+								if ui.State == StateResolving { btn.Background = color.NRGBA{R: 100, G: 100, B: 100, A: 255} }
 								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -224,10 +199,9 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Right: unit.Dp(16)}.Layout(gtx, material.Button(ui.Theme, &ui.BtnOutput, "output.txt").Layout)
 							}),
-							layout.Rigid(material.Switch(ui.Theme, &ui.ThemeToggle, "Dark Mode").Layout),
+							layout.Rigid(material.Switch(ui.Theme, &ui.ThemeToggle, "").Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Label(ui.Theme, unit.Sp(12), " Dark Theme")
-								return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+								return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, material.Label(ui.Theme, unit.Sp(12), "Dark").Layout)
 							}),
 						)
 					}),
@@ -235,304 +209,180 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 
-		// Log area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			logBg := color.NRGBA{R: 245, G: 245, B: 245, A: 255}
-			if ui.IsDarkMode {
-				logBg = color.NRGBA{R: 30, G: 30, B: 30, A: 255}
-			}
-			
+			if ui.IsDarkMode { logBg = color.NRGBA{R: 30, G: 30, B: 30, A: 255} }
 			return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				// Draw log background
-				rect := clip.Rect{Max: gtx.Constraints.Max}.Op()
-				paint.FillShape(gtx.Ops, logBg, rect)
-
+				paint.FillShape(gtx.Ops, logBg, clip.Rect{Max: gtx.Constraints.Max}.Op())
 				ui.LogMutex.Lock()
-				logs := make([]string, len(ui.Logs))
-				copy(logs, ui.Logs)
+				logs := append([]string(nil), ui.Logs...)
 				ui.LogMutex.Unlock()
-
 				return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return material.List(ui.Theme, &ui.LogList).Layout(gtx, len(logs), func(gtx layout.Context, index int) layout.Dimensions {
-						lbl := material.Label(ui.Theme, unit.Sp(14), logs[index])
-						if ui.IsDarkMode {
-							lbl.Color = color.NRGBA{R: 200, G: 200, B: 200, A: 255}
-						} else {
-							lbl.Color = color.NRGBA{R: 40, G: 40, B: 40, A: 255}
-						}
-						return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+					return material.List(ui.Theme, &ui.LogList).Layout(gtx, len(logs), func(gtx layout.Context, i int) layout.Dimensions {
+						lbl := material.Label(ui.Theme, unit.Sp(14), logs[i])
+						if ui.IsDarkMode { lbl.Color = color.NRGBA{R: 200, G: 200, B: 200, A: 255} }
+						return layout.Inset{Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
 					})
 				})
 			})
 		}),
 
-		// Bottom Progress Bar
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return ui.drawProgressBar(gtx)
-			})
+			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, ui.drawProgressBar)
 		}),
 	)
 }
 
 func (ui *UI) drawProgressBar(gtx layout.Context) layout.Dimensions {
-	height := gtx.Dp(unit.Dp(12))
+	height := gtx.Dp(unit.Dp(10))
 	width := gtx.Constraints.Max.X
-
-	// Background of progress bar
-	bgRect := clip.Rect{Max: image.Pt(width, height)}
-	paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 200, B: 200, A: 255}, bgRect.Op())
+	paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 200, B: 200, A: 255}, clip.Rect{Max: image.Pt(width, height)}.Op())
 
 	var fgColor color.NRGBA
 	switch ui.State {
 	case StateIdle:
-		fgColor = color.NRGBA{R: 128, G: 128, B: 128, A: 255} // Grey
-		paint.FillShape(gtx.Ops, fgColor, bgRect.Op())
+		fgColor = color.NRGBA{R: 128, G: 128, B: 128, A: 255}
+		paint.FillShape(gtx.Ops, fgColor, clip.Rect{Max: image.Pt(width, height)}.Op())
 	case StateDone:
-		fgColor = color.NRGBA{R: 0, G: 200, B: 0, A: 255} // Green
-		paint.FillShape(gtx.Ops, fgColor, bgRect.Op())
+		fgColor = color.NRGBA{R: 0, G: 200, B: 0, A: 255}
+		paint.FillShape(gtx.Ops, fgColor, clip.Rect{Max: image.Pt(width, height)}.Op())
 	case StateResolving:
-		fgColor = color.NRGBA{R: 0, G: 120, B: 215, A: 255} // Blue (Windows style)
-		
-		// Calculate indeterminate position
-		barWidth := width / 4
-		pos := float32(width-barWidth) * (float32(math.Sin(float64(ui.ProgressAnim))) + 1.0) / 2.0
-		
-		fgRect := clip.Rect{
-			Min: image.Pt(int(pos), 0),
-			Max: image.Pt(int(pos)+barWidth, height),
-		}
-		paint.FillShape(gtx.Ops, fgColor, fgRect.Op())
+		fgColor = color.NRGBA{R: 0, G: 120, B: 215, A: 255}
+		barW := width / 4
+		pos := float32(width-barW) * (float32(math.Sin(float64(ui.ProgressAnim))) + 1.0) / 2.0
+		paint.FillShape(gtx.Ops, fgColor, clip.Rect{Min: image.Pt(int(pos), 0), Max: image.Pt(int(pos)+barW, height)}.Op())
 	}
-
 	return layout.Dimensions{Size: image.Pt(width, height)}
 }
 
 func (ui *UI) updateTheme() {
 	if ui.IsDarkMode {
-		ui.Theme.Bg = color.NRGBA{R: 40, G: 40, B: 40, A: 255}
-		ui.Theme.Fg = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+		ui.Theme.Bg, ui.Theme.Fg = color.NRGBA{R: 40, G: 40, B: 40, A: 255}, color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 	} else {
-		ui.Theme.Bg = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-		ui.Theme.Fg = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+		ui.Theme.Bg, ui.Theme.Fg = color.NRGBA{R: 255, G: 255, B: 255, A: 255}, color.NRGBA{R: 0, G: 0, B: 0, A: 255}
 	}
 }
 
 func (ui *UI) addLog(msg string) {
 	ui.LogMutex.Lock()
 	defer ui.LogMutex.Unlock()
-	timestamp := time.Now().Format("15:04:05")
-	ui.Logs = append(ui.Logs, fmt.Sprintf("[%s] %s", timestamp, msg))
-	
-	// Auto-scroll logic
+	ui.Logs = append(ui.Logs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), msg))
 	ui.LogList.Position.First = len(ui.Logs)
 	ui.Window.Invalidate()
 }
 
-func openFile(filename string) {
-	absPath, err := filepath.Abs(filename)
-	if err != nil {
-		return
-	}
-	// Use standard Windows start command to open file in default editor
-	exec.Command("cmd", "/c", "start", "", absPath).Start()
+func openFile(fn string) {
+	path, _ := filepath.Abs(fn)
+	exec.Command("cmd", "/c", "start", "", path).Start()
 }
-
-// --- Logic ---
 
 func (ui *UI) startResolving(ctx context.Context) {
 	ui.addLog("Starting to resolve domains...")
-	
-	// Load settings
-	ui.addLog("Reading settings.txt...")
 	cfg := loadSettings()
-	ui.addLog(fmt.Sprintf("DNS Server: %s", cfg.Server))
-	ui.addLog(fmt.Sprintf("IPv4: %v, IPv6: %v", cfg.IPv4, cfg.IPv6))
+	ui.addLog(fmt.Sprintf("DNS Server: %s | IPv4: %v, IPv6: %v", cfg.Server, cfg.IPv4, cfg.IPv6))
 
-	// Load input
-	ui.addLog("Reading input.txt...")
 	lines, err := readLines("input.txt")
 	if err != nil {
-		ui.addLog(fmt.Sprintf("Error reading input.txt: %v", err))
-		ui.finish(StateIdle)
-		return
+		ui.addLog("Error reading input.txt"); ui.finish(StateIdle); return
 	}
 
-	var toResolve []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			toResolve = append(toResolve, line)
-		}
-	}
-	ui.addLog(fmt.Sprintf("Found %d domains to resolve", len(toResolve)))
 	ui.addLog("----------------------------------------")
-
-	outputLines := make([]string, 0)
-	client := &dns.Client{Net: "https", Timeout: 5 * time.Second}
 	
-	// Construct DNS URL
-	portPart := ""
-	if cfg.Port != "" {
-		portPart = ":" + cfg.Port
-	}
-	dohURL := fmt.Sprintf("https://%s%s/dns-query", cfg.Server, portPart)
+	// Better DoH setup
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	client := &dns.Client{Net: "https", Timeout: 10 * time.Second, ExchangeFunc: func(m *dns.Msg, addr string) (*dns.Msg, time.Duration, error) {
+		return dns.ExchangeDoH(m, addr, httpClient)
+	}}
+	
+	port := cfg.Port
+	if port == "" { port = "443" }
+	dohURL := fmt.Sprintf("https://%s:%s/dns-query", cfg.Server, port)
 
+	var output []string
 	for _, line := range lines {
-		// Check for cancellation
 		select {
 		case <-ctx.Done():
-			ui.addLog("Operation cancelled by user")
-			ui.finish(StateIdle)
-			return
+			ui.addLog("Operation cancelled by user"); ui.finish(StateIdle); return
 		default:
 		}
 
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" { continue }
+		if strings.HasPrefix(trimmed, "#") {
+			output = append(output, trimmed)
+			ui.addLog(trimmed); continue
 		}
 
-		if strings.HasPrefix(line, "#") {
-			outputLines = append(outputLines, line)
-			ui.addLog(line)
-			continue
-		}
+		ui.addLog(fmt.Sprintf("Resolving: %s", trimmed))
+		var found []string
+		if cfg.IPv4 { found = append(found, resolve(client, dohURL, trimmed, dns.TypeA)...) }
+		if cfg.IPv6 { found = append(found, resolve(client, dohURL, trimmed, dns.TypeAAAA)...) }
 
-		domain := line
-		ui.addLog(fmt.Sprintf("Resolving: %s", domain))
-
-		var ips []string
-
-		if cfg.IPv4 {
-			res := resolveType(client, dohURL, domain, dns.TypeA)
-			ips = append(ips, res...)
-		}
-		if cfg.IPv6 {
-			res := resolveType(client, dohURL, domain, dns.TypeAAAA)
-			ips = append(ips, res...)
-		}
-
-		if len(ips) == 0 {
-			ui.addLog(fmt.Sprintf("   No records found for %s", domain))
-			outputLines = append(outputLines, fmt.Sprintf("No records found: %s", domain))
+		if len(found) == 0 {
+			ui.addLog(fmt.Sprintf("   No records found for %s", trimmed))
+			output = append(output, "No records found: "+trimmed)
 		} else {
-			for _, ip := range ips {
-				ui.addLog(fmt.Sprintf("   %s %s", ip, domain))
-				outputLines = append(outputLines, fmt.Sprintf("%s %s", ip, domain))
+			for _, ip := range found {
+				ui.addLog(fmt.Sprintf("   %s %s", ip, trimmed))
+				output = append(output, fmt.Sprintf("%s %s", ip, trimmed))
 			}
 		}
 	}
 
 	ui.addLog("----------------------------------------")
-	ui.addLog("Writing output.txt...")
-	
-	err = writeLines("output.txt", outputLines)
-	if err != nil {
-		ui.addLog(fmt.Sprintf("Error writing output.txt: %v", err))
-	} else {
-		ui.addLog(fmt.Sprintf("Successfully wrote %d lines to output.txt", len(outputLines)))
-	}
-
+	writeLines("output.txt", output)
+	ui.addLog("Successfully wrote to output.txt")
 	ui.finish(StateDone)
 }
 
-func (ui *UI) finish(state AppState) {
-	ui.State = state
-	ui.CancelFunc = nil
-	ui.Window.Invalidate()
-}
+func (ui *UI) finish(s AppState) { ui.State = s; ui.CancelFunc = nil; ui.Window.Invalidate() }
 
-func resolveType(client *dns.Client, url, domain string, qtype uint16) []string {
-	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(domain), qtype)
-	msg.RecursionDesired = true
-
-	resp, _, err := client.Exchange(msg, url)
-	if err != nil || resp == nil {
-		return nil
-	}
-
+func resolve(c *dns.Client, url, domain string, qtype uint16) []string {
+	m := new(dns.Msg)
+	m.SetQuestion(dns.Fqdn(domain), qtype)
+	// Important: DoH with miekg/dns requires the URL in the address field
+	r, _, err := c.Exchange(m, url)
+	if err != nil || r == nil { return nil }
+	
 	var ips []string
-	for _, ans := range resp.Answer {
-		switch record := ans.(type) {
-		case *dns.A:
-			ips = append(ips, record.A.String())
-		case *dns.AAAA:
-			ips = append(ips, record.AAAA.String())
-		}
+	for _, a := range r.Answer {
+		if t, ok := a.(*dns.A); ok && qtype == dns.TypeA { ips = append(ips, t.A.String()) }
+		if t, ok := a.(*dns.AAAA); ok && qtype == dns.TypeAAAA { ips = append(ips, t.AAAA.String()) }
 	}
 	return ips
 }
 
 func loadSettings() Config {
-	cfg := Config{
-		Server: "dns.google",
-		IPv4:   true,
-		IPv6:   false,
-	}
-
-	file, err := os.Open("settings.txt")
-	if err != nil {
-		return cfg
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		
-		key, val := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-		switch key {
-		case "server":
-			cfg.Server = val
-		case "port":
-			cfg.Port = val
-		case "ipv4":
-			cfg.IPv4 = (val == "true")
-		case "ipv6":
-			cfg.IPv6 = (val == "true")
+	c := Config{Server: "dns.google", IPv4: true, IPv6: false}
+	f, err := os.Open("settings.txt")
+	if err != nil { return c }
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		l := strings.TrimSpace(s.Text())
+		if l == "" || strings.HasPrefix(l, "#") { continue }
+		p := strings.SplitN(l, "=", 2)
+		if len(p) < 2 { continue }
+		k, v := strings.TrimSpace(p[0]), strings.TrimSpace(p[1])
+		switch k {
+		case "server": c.Server = v
+		case "port": c.Port = v
+		case "ipv4": c.IPv4 = (v == "true")
+		case "ipv6": c.IPv6 = (v == "true")
 		}
 	}
-	return cfg
+	return c
 }
 
-func readLines(path string) ([]string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	return lines, scanner.Err()
+func readLines(p string) ([]string, error) {
+	f, err := os.Open(p); if err != nil { return nil, err }; defer f.Close()
+	var l []string
+	s := bufio.NewScanner(f)
+	for s.Scan() { l = append(l, s.Text()) }
+	return l, s.Err()
 }
 
-func writeLines(path string, lines []string) error {
-	file, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	writer := bufio.NewWriter(file)
-	for _, line := range lines {
-		_, err := writer.WriteString(line + "\n")
-		if err != nil {
-			return err
-		}
-	}
-	return writer.Flush()
+func writeLines(p string, l []string) {
+	f, _ := os.Create(p); defer f.Close()
+	for _, line := range l { f.WriteString(line + "\n") }
 }
