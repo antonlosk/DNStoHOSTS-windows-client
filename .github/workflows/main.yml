@@ -59,7 +59,7 @@ jobs:
           GOARCH: amd64
         run: |
           # Build with optimization flags and append version to the filename
-          go build -ldflags="-s -w" -trimpath -o DNStoHOSTS_${{ steps.version.outputs.version }}.exe main.go
+          go build -ldflags="-H=windowsgui -s -w" -trimpath -o DNStoHOSTS_${{ steps.version.outputs.version }}.exe main.go
 
       - name: Create GitHub Release
         env:
