@@ -52,7 +52,7 @@ type UI struct {
 	LogList      widget.List
 	Logs         []string
 	LogMutex     sync.Mutex
-	NewLogAdded  bool // Флаг для авто-скролла в UI потоке
+	NewLogAdded  bool
 
 	State        AppState
 	ProgressAnim float32
@@ -88,11 +88,16 @@ func main() {
 }
 
 func ensureFilesExist() {
+	// Create input.txt if not exists
 	if _, err := os.Stat("input.txt"); os.IsNotExist(err) {
-		os.WriteFile("input.txt", []byte("# Google\ngoogle.com\n"), 0644)
+		content := "# Google\ngoogle.com\n"
+		os.WriteFile("input.txt", []byte(content), 0644)
 	}
+
+	// Create settings.txt with #port=443 if not exists
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
-		os.WriteFile("settings.txt", []byte("server=dns.google\nipv4=true\nipv6=false\n"), 0644)
+		content := "server=dns.google\n#port=443\nipv4=true\nipv6=false\n"
+		os.WriteFile("settings.txt", []byte(content), 0644)
 	}
 }
 
@@ -137,7 +142,7 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 	if ui.BtnStop.Clicked(gtx) && ui.State == StateResolving {
 		if ui.CancelFunc != nil {
 			ui.CancelFunc()
-			ui.addLog("Stopping...")
+			ui.addLog("Stopping process...")
 		}
 	}
 
@@ -163,7 +168,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 
 	paint.Fill(gtx.Ops, ui.Theme.Bg)
 
-	// Авто-скролл: проверяем флаг внутри UI потока
 	ui.LogMutex.Lock()
 	if ui.NewLogAdded {
 		ui.LogList.Position.First = len(ui.Logs)
@@ -173,7 +177,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	ui.LogMutex.Unlock()
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Панель управления
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
@@ -182,7 +185,7 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								btn := material.Button(ui.Theme, &ui.BtnStart, "Start")
 								if ui.State == StateResolving {
-									btn.Background = color.NRGBA{R: 120, G: 120, B: 120, A: 255}
+									btn.Background = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
 								} else {
 									btn.Background = color.NRGBA{R: 0, G: 150, B: 0, A: 255}
 								}
@@ -219,7 +222,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 
-		// Логи
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			logBg := color.NRGBA{R: 245, G: 245, B: 245, A: 255}
 			if ui.IsDarkMode { logBg = color.NRGBA{R: 30, G: 30, B: 30, A: 255} }
@@ -228,14 +230,13 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 				return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return material.List(ui.Theme, &ui.LogList).Layout(gtx, len(logsCopy), func(gtx layout.Context, i int) layout.Dimensions {
 						lbl := material.Label(ui.Theme, unit.Sp(14), logsCopy[i])
-						if ui.IsDarkMode { lbl.Color = color.NRGBA{R: 210, G: 210, B: 210, A: 255} }
+						if ui.IsDarkMode { lbl.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255} }
 						return layout.Inset{Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
 					})
 				})
 			})
 		}),
 
-		// Прогресс-бар
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, ui.drawProgressBar)
 		}),
@@ -286,7 +287,7 @@ func openFile(fn string) {
 }
 
 func (ui *UI) startResolving(ctx context.Context) {
-	ui.addLog("Process started...")
+	ui.addLog("Starting resolution process...")
 	cfg := loadSettings()
 	
 	lines, err := readLines("input.txt")
@@ -305,7 +306,7 @@ func (ui *UI) startResolving(ctx context.Context) {
 	for _, line := range lines {
 		select {
 		case <-ctx.Done():
-			ui.addLog("Cancelled.")
+			ui.addLog("Operation cancelled.")
 			ui.finish(StateIdle)
 			return
 		default:
@@ -325,18 +326,18 @@ func (ui *UI) startResolving(ctx context.Context) {
 		if cfg.IPv6 { found = append(found, resolveBinaryDoH(ctx, httpClient, dohURL, trimmed, dns.TypeAAAA)...) }
 
 		if len(found) == 0 {
-			ui.addLog("   Not found: " + trimmed)
-			output = append(output, "# Not found: "+trimmed)
+			ui.addLog("   No records found for " + trimmed)
+			output = append(output, "# No records found: "+trimmed)
 		} else {
 			for _, ip := range found {
-				ui.addLog("   -> " + ip)
+				ui.addLog("   Found: " + ip)
 				output = append(output, fmt.Sprintf("%-15s %s", ip, trimmed))
 			}
 		}
 	}
 
 	writeLines("output.txt", output)
-	ui.addLog("Done! Check output.txt")
+	ui.addLog("Process complete. Results saved to output.txt")
 	ui.finish(StateDone)
 }
 
