@@ -674,7 +674,7 @@ func resolveDomainDoH(ctx context.Context, cfg Settings, domain string) []string
 	}
 	urlStr += "/dns-query"
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second}
 	fqdn := dns.Fqdn(domain)
 
 	var qTypes
