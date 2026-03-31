@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"image"
 	"image/color"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -288,12 +290,7 @@ func (ui *UI) startResolving(ctx context.Context) {
 
 	ui.addLog("----------------------------------------")
 	
-	// Better DoH setup
 	httpClient := &http.Client{Timeout: 10 * time.Second}
-	client := &dns.Client{Net: "https", Timeout: 10 * time.Second, ExchangeFunc: func(m *dns.Msg, addr string) (*dns.Msg, time.Duration, error) {
-		return dns.ExchangeDoH(m, addr, httpClient)
-	}}
-	
 	port := cfg.Port
 	if port == "" { port = "443" }
 	dohURL := fmt.Sprintf("https://%s:%s/dns-query", cfg.Server, port)
@@ -315,8 +312,8 @@ func (ui *UI) startResolving(ctx context.Context) {
 
 		ui.addLog(fmt.Sprintf("Resolving: %s", trimmed))
 		var found []string
-		if cfg.IPv4 { found = append(found, resolve(client, dohURL, trimmed, dns.TypeA)...) }
-		if cfg.IPv6 { found = append(found, resolve(client, dohURL, trimmed, dns.TypeAAAA)...) }
+		if cfg.IPv4 { found = append(found, resolveBinaryDoH(ctx, httpClient, dohURL, trimmed, dns.TypeA)...) }
+		if cfg.IPv6 { found = append(found, resolveBinaryDoH(ctx, httpClient, dohURL, trimmed, dns.TypeAAAA)...) }
 
 		if len(found) == 0 {
 			ui.addLog(fmt.Sprintf("   No records found for %s", trimmed))
@@ -337,17 +334,55 @@ func (ui *UI) startResolving(ctx context.Context) {
 
 func (ui *UI) finish(s AppState) { ui.State = s; ui.CancelFunc = nil; ui.Window.Invalidate() }
 
-func resolve(c *dns.Client, url, domain string, qtype uint16) []string {
+// resolveBinaryDoH implements DNS-over-HTTPS using binary wire format via HTTP POST
+func resolveBinaryDoH(ctx context.Context, client *http.Client, url, domain string, qtype uint16) []string {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), qtype)
-	// Important: DoH with miekg/dns requires the URL in the address field
-	r, _, err := c.Exchange(m, url)
-	if err != nil || r == nil { return nil }
-	
+	m.RecursionDesired = true
+
+	// Pack the message into binary wire format
+	buf, err := m.Pack()
+	if err != nil {
+		return nil
+	}
+
+	// Create POST request with application/dns-message content type
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(buf))
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	// Unpack the binary response back into a dns.Msg
+	respMsg := new(dns.Msg)
+	if err := respMsg.Unpack(body); err != nil {
+		return nil
+	}
+
 	var ips []string
-	for _, a := range r.Answer {
-		if t, ok := a.(*dns.A); ok && qtype == dns.TypeA { ips = append(ips, t.A.String()) }
-		if t, ok := a.(*dns.AAAA); ok && qtype == dns.TypeAAAA { ips = append(ips, t.AAAA.String()) }
+	for _, a := range respMsg.Answer {
+		if t, ok := a.(*dns.A); ok && qtype == dns.TypeA {
+			ips = append(ips, t.A.String())
+		}
+		if t, ok := a.(*dns.AAAA); ok && qtype == dns.TypeAAAA {
+			ips = append(ips, t.AAAA.String())
+		}
 	}
 	return ips
 }
