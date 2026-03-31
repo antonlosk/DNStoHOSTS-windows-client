@@ -49,9 +49,6 @@ type Application struct {
 	editorSettings widget.Editor
 	editorLog      widget.Editor
 
-	// Scrollbars
-	scrollLog material.ScrollbarStyle
-
 	// State
 	mu           sync.Mutex
 	logText      string
@@ -64,7 +61,7 @@ type Application struct {
 }
 
 const (
-	defaultSettings = "server=dns.google\nport=8443\nipv4=true\nipv6=false"
+	defaultSettings = "server=dns.google\n#port=443\nipv4=true\nipv6=false"
 	defaultInput    = "Google\ngoogle.com"
 	settingsFile    = "settings.txt"
 	inputFile       = "input.txt"
@@ -101,7 +98,6 @@ func ensureFilesExist() {
 func runLoop(w *app.Window) error {
 	th := material.NewTheme()
 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
-	// Windows 10 flat style tweaks
 	th.FingerSize = unit.Dp(32)
 
 	application := &Application{
@@ -130,7 +126,6 @@ func runLoop(w *app.Window) error {
 }
 
 func (a *Application) handleEvents(gtx layout.Context) {
-	// Editor actions
 	if a.btnCancel.Clicked(gtx) {
 		b, _ := os.ReadFile(settingsFile)
 		a.editorSettings.SetText(string(b))
@@ -139,7 +134,6 @@ func (a *Application) handleEvents(gtx layout.Context) {
 		os.WriteFile(settingsFile, []byte(a.editorSettings.Text()), 0644)
 	}
 	if a.btnCopy.Clicked(gtx) {
-		// Native Windows clipboard copy to avoid Gio API version issues
 		cmd := exec.Command("clip")
 		in, err := cmd.StdinPipe()
 		if err == nil {
@@ -154,10 +148,9 @@ func (a *Application) handleEvents(gtx layout.Context) {
 		a.editorSettings.SetText("")
 	}
 	if a.btnReset.Clicked(gtx) {
-		a.editorSettings.SetText(defaultSettings)
+		a.editorSettings.SetText("server=dns.google\n#port=443\nipv4=true\nipv6=false")
 	}
 
-	// Control actions
 	if a.btnStart.Clicked(gtx) {
 		a.mu.Lock()
 		if !a.isRunning {
@@ -209,7 +202,6 @@ func (a *Application) setProgress(val float32, mode int) {
 }
 
 func (a *Application) layout(gtx layout.Context) layout.Dimensions {
-	// Background
 	paint.Fill(gtx.Ops, color.NRGBA{R: 240, G: 240, B: 240, A: 255})
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -257,10 +249,8 @@ func (a *Application) layoutEditorControls(gtx layout.Context) layout.Dimensions
 }
 
 func (a *Application) layoutSettingsEditor(gtx layout.Context) layout.Dimensions {
-	// Draw background for editor
 	rect := clip.Rect{Max: gtx.Constraints.Max}.Op()
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, rect)
-
 	ed := material.Editor(a.theme, &a.editorSettings, "Edit settings.txt here...")
 	return layout.UniformInset(unit.Dp(4)).Layout(gtx, ed.Layout)
 }
@@ -283,49 +273,33 @@ func (a *Application) layoutLogControls(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *Application) layoutLogViewer(gtx layout.Context) layout.Dimensions {
-	// Slightly different background for log
 	rect := clip.Rect{Max: gtx.Constraints.Max}.Op()
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 30, G: 30, B: 30, A: 255}, rect)
-
 	ed := material.Editor(a.theme, &a.editorLog, "")
 	ed.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
-
 	return layout.UniformInset(unit.Dp(4)).Layout(gtx, ed.Layout)
 }
 
 func (a *Application) layoutProgressBar(gtx layout.Context) layout.Dimensions {
 	height := gtx.Dp(unit.Dp(10))
 	width := gtx.Constraints.Max.X
-
 	var c color.NRGBA
 	switch a.progressMode {
-	case 1: // Resolving - Blue
-		c = color.NRGBA{R: 0, G: 120, B: 215, A: 255} // Win10 Blue
-	case 2: // Done - Green
-		c = color.NRGBA{R: 34, G: 177, B: 76, A: 255}
-	default: // Idle - Gray
-		c = color.NRGBA{R: 180, G: 180, B: 180, A: 255}
+	case 1: c = color.NRGBA{R: 0, G: 120, B: 215, A: 255}
+	case 2: c = color.NRGBA{R: 34, G: 177, B: 76, A: 255}
+	default: c = color.NRGBA{R: 180, G: 180, B: 180, A: 255}
 	}
-
-	// Draw Background
 	bgRect := clip.Rect{Max: image.Pt(width, height)}.Op()
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 200, B: 200, A: 255}, bgRect)
-
-	// Draw Foreground
 	a.mu.Lock()
 	progressWidth := int(float32(width) * a.progress)
-	if a.progressMode != 1 && a.progress == 0 {
-		progressWidth = width // Fill completely for Idle/Done if progress is 0 but we want full color
-	}
+	if a.progressMode != 1 && a.progress == 0 { progressWidth = width }
 	a.mu.Unlock()
-
 	fgRect := clip.Rect{Max: image.Pt(progressWidth, height)}.Op()
 	paint.FillShape(gtx.Ops, c, fgRect)
-
 	return layout.Dimensions{Size: image.Pt(width, height)}
 }
 
-// Resolver Logic
 func (a *Application) runResolver(ctx context.Context) {
 	defer func() {
 		a.mu.Lock()
@@ -336,32 +310,22 @@ func (a *Application) runResolver(ctx context.Context) {
 	a.addLog("Starting to resolve domains...")
 	a.addLog("Reading settings.txt...")
 
-	// Parse settings
 	settingsMap := make(map[string]string)
 	settingsContent := a.editorSettings.Text()
 	lines := strings.Split(settingsContent, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
+		if line == "" || strings.HasPrefix(line, "#") { continue }
 		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			settingsMap[strings.ToLower(parts[0])] = parts[1]
-		}
+		if len(parts) == 2 { settingsMap[strings.ToLower(parts[0])] = parts[1] }
 	}
 
 	server := settingsMap["server"]
-	if server == "" {
-		server = "dns.google"
-	}
-	port := settingsMap["port"] // Optional
+	if server == "" { server = "dns.google" }
+	port := settingsMap["port"]
 	ipv4 := settingsMap["ipv4"] == "true"
 	ipv6 := settingsMap["ipv6"] == "true"
-
-	if !ipv4 && !ipv6 {
-		ipv4 = true // Fallback
-	}
+	if !ipv4 && !ipv6 { ipv4 = true }
 
 	a.addLog(fmt.Sprintf("DNS Server: %s", server))
 	a.addLog(fmt.Sprintf("IPv4: %t, IPv6: %t", ipv4, ipv6))
@@ -378,16 +342,12 @@ func (a *Application) runResolver(ctx context.Context) {
 	var domains []string
 	for _, l := range inputLines {
 		l = strings.TrimSpace(l)
-		if l != "" {
-			domains = append(domains, l)
-		}
+		if l != "" { domains = append(domains, l) }
 	}
 
 	domainCount := 0
 	for _, d := range domains {
-		if strings.Contains(d, ".") {
-			domainCount++
-		}
+		if strings.Contains(d, ".") { domainCount++ }
 	}
 
 	a.addLog(fmt.Sprintf("Found %d domains to resolve", domainCount))
@@ -401,40 +361,29 @@ func (a *Application) runResolver(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			a.addLog("Operation cancelled by user")
-			a.setProgress(1.0, 0) // Back to gray
+			a.setProgress(1.0, 0)
 			return
 		default:
 		}
 
 		if !strings.Contains(line, ".") {
-			// Category / Header
 			a.addLog(fmt.Sprintf("# %s", line))
 			outputBuffer.WriteString(line + "\n")
 			continue
 		}
 
-		// It's a domain
 		domainIndex++
 		a.addLog(fmt.Sprintf("Resolving: %s", line))
-
-		// Calculate progress
-		if domainCount > 0 {
-			a.setProgress(float32(domainIndex)/float32(domainCount), 1)
-		}
+		if domainCount > 0 { a.setProgress(float32(domainIndex)/float32(domainCount), 1) }
 
 		var ips []string
-
 		if ipv4 {
 			res, err := resolveDoH(server, port, line, dns.TypeA)
-			if err == nil {
-				ips = append(ips, res...)
-			}
+			if err == nil { ips = append(ips, res...) }
 		}
 		if ipv6 {
 			res, err := resolveDoH(server, port, line, dns.TypeAAAA)
-			if err == nil {
-				ips = append(ips, res...)
-			}
+			if err == nil { ips = append(ips, res...) }
 		}
 
 		if len(ips) == 0 {
@@ -457,64 +406,44 @@ func (a *Application) runResolver(ctx context.Context) {
 	} else {
 		a.addLog(fmt.Sprintf("Successfully wrote %d lines to output.txt", resolvedCount))
 	}
-
-	a.setProgress(1.0, 2) // Green when done
+	a.setProgress(1.0, 2)
 }
 
 func resolveDoH(server, port, domain string, qtype uint16) ([]string, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), qtype)
 	m.RecursionDesired = true
-
 	wire, err := m.Pack()
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 
 	url := "https://" + server
-	if port != "" {
-		url += ":" + port
-	}
+	if port != "" { url += ":" + port }
 	url += "/dns-query"
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(wire))
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("Accept", "application/dns-message")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bad status code: %d", resp.StatusCode)
-	}
-
+	if resp.StatusCode != http.StatusOK { return nil, fmt.Errorf("bad status code: %d", resp.StatusCode) }
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 
 	rMsg := new(dns.Msg)
 	err = rMsg.Unpack(body)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 
 	var ips []string
 	for _, ans := range rMsg.Answer {
 		switch record := ans.(type) {
-		case *dns.A:
-			ips = append(ips, record.A.String())
-		case *dns.AAAA:
-			ips = append(ips, record.AAAA.String())
+		case *dns.A: ips = append(ips, record.A.String())
+		case *dns.AAAA: ips = append(ips, record.AAAA.String())
 		}
 	}
-
 	return ips, nil
 }
