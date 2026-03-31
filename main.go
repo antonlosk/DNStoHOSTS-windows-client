@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"image"
 	"image/color"
 	"math"
 	"os"
@@ -14,13 +15,10 @@ import (
 	"time"
 
 	"gioui.org/app"
-	"gioui.org/font/gofont"
-	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -73,10 +71,13 @@ func main() {
 	ensureFilesExist()
 
 	go func() {
-		w := app.NewWindow(
+		// New Window API in modern Gio
+		w := new(app.Window)
+		w.Option(
 			app.Title("DNStoHOSTS"),
 			app.Size(unit.Dp(800), unit.Dp(600)),
 		)
+		
 		if err := drawWindow(w); err != nil {
 			fmt.Println("Error:", err)
 			os.Exit(1)
@@ -101,8 +102,8 @@ func ensureFilesExist() {
 }
 
 func drawWindow(w *app.Window) error {
+	// Modern Gio material theme automatically includes Go fonts
 	th := material.NewTheme()
-	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
 
 	ui := &UI{
 		Theme:      th,
@@ -113,17 +114,15 @@ func drawWindow(w *app.Window) error {
 	ui.ThemeToggle.Value = true // Default to dark mode
 
 	ui.LogList.Axis = layout.Vertical
-	ui.LogList.Scrollbar.Style.Width = unit.Dp(8)
 
 	var ops op.Ops
 
 	for {
-		e := w.NextEvent()
-		switch e := e.(type) {
-		case system.DestroyEvent:
+		switch e := w.Event().(type) {
+		case app.DestroyEvent:
 			return e.Err
-		case system.FrameEvent:
-			gtx := layout.NewContext(&ops, e)
+		case app.FrameEvent:
+			gtx := app.NewContext(&ops, e)
 			ui.handleEvents(gtx)
 			ui.layout(gtx)
 			e.Frame(gtx.Ops)
@@ -181,7 +180,8 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 		if ui.ProgressAnim > math.Pi*2 {
 			ui.ProgressAnim = 0
 		}
-		op.InvalidateOp{}.Add(gtx.Ops)
+		// Trigger the next frame for smooth animation
+		ui.Window.Invalidate()
 	}
 
 	// Main background
@@ -260,7 +260,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 						} else {
 							lbl.Color = color.NRGBA{R: 40, G: 40, B: 40, A: 255}
 						}
-						// Use monospace font-like appearance for logs if possible, but default is fine
 						return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
 					})
 				})
@@ -281,20 +280,17 @@ func (ui *UI) drawProgressBar(gtx layout.Context) layout.Dimensions {
 	width := gtx.Constraints.Max.X
 
 	// Background of progress bar
-	bgRect := clip.Rect{Max: gtx.Constraints.Max}
-	bgRect.Max.Y = height
+	bgRect := clip.Rect{Max: image.Pt(width, height)}
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 200, B: 200, A: 255}, bgRect.Op())
 
 	var fgColor color.NRGBA
 	switch ui.State {
 	case StateIdle:
 		fgColor = color.NRGBA{R: 128, G: 128, B: 128, A: 255} // Grey
-		fgRect := bgRect
-		paint.FillShape(gtx.Ops, fgColor, fgRect.Op())
+		paint.FillShape(gtx.Ops, fgColor, bgRect.Op())
 	case StateDone:
 		fgColor = color.NRGBA{R: 0, G: 200, B: 0, A: 255} // Green
-		fgRect := bgRect
-		paint.FillShape(gtx.Ops, fgColor, fgRect.Op())
+		paint.FillShape(gtx.Ops, fgColor, bgRect.Op())
 	case StateResolving:
 		fgColor = color.NRGBA{R: 0, G: 120, B: 215, A: 255} // Blue (Windows style)
 		
@@ -303,18 +299,13 @@ func (ui *UI) drawProgressBar(gtx layout.Context) layout.Dimensions {
 		pos := float32(width-barWidth) * (float32(math.Sin(float64(ui.ProgressAnim))) + 1.0) / 2.0
 		
 		fgRect := clip.Rect{
-			Min: goImagePoint(int(pos), 0),
-			Max: goImagePoint(int(pos)+barWidth, height),
+			Min: image.Pt(int(pos), 0),
+			Max: image.Pt(int(pos)+barWidth, height),
 		}
 		paint.FillShape(gtx.Ops, fgColor, fgRect.Op())
 	}
 
-	return layout.Dimensions{Size: goImagePoint(width, height)}
-}
-
-// goImagePoint replaces image.Point to avoid importing image package just for this
-func goImagePoint(x, y int) struct{ X, Y int } {
-	return struct{ X, Y int }{X: x, Y: y}
+	return layout.Dimensions{Size: image.Pt(width, height)}
 }
 
 func (ui *UI) updateTheme() {
@@ -333,7 +324,7 @@ func (ui *UI) addLog(msg string) {
 	timestamp := time.Now().Format("15:04:05")
 	ui.Logs = append(ui.Logs, fmt.Sprintf("[%s] %s", timestamp, msg))
 	
-	// Auto-scroll logic (rudimentary)
+	// Auto-scroll logic
 	ui.LogList.Position.First = len(ui.Logs)
 	ui.Window.Invalidate()
 }
@@ -344,7 +335,7 @@ func openFile(filename string) {
 		return
 	}
 	// Use standard Windows start command to open file in default editor
-	exec.Command("cmd", "/c", "start", absPath).Start()
+	exec.Command("cmd", "/c", "start", "", absPath).Start()
 }
 
 // --- Logic ---
