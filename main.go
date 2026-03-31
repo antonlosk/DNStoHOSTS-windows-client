@@ -28,8 +28,6 @@ import (
 	"github.com/miekg/dns"
 )
 
-// --- Constants & Defaults ---
-
 const (
 	InputFile    = "input.txt"
 	SettingsFile = "settings.txt"
@@ -46,10 +44,7 @@ ipv4=true
 ipv6=false
 `
 
-// --- UI Enums and States ---
-
 type TabMode int
-
 const (
 	TabLog TabMode = iota
 	TabInput
@@ -57,7 +52,6 @@ const (
 )
 
 type ProgressState int
-
 const (
 	ProgressIdle ProgressState = iota
 	ProgressRunning
@@ -65,43 +59,33 @@ const (
 )
 
 type ThemeMode int
-
 const (
 	ThemeDark ThemeMode = iota
 	ThemeLight
 )
 
-// --- Application State ---
-
 type AppState struct {
-	mu sync.Mutex
-
-	window    *app.Window
-	theme     *material.Theme
-	themeMode ThemeMode
-	ThemeBtn  widget.Clickable
-
-	currentTab  TabMode
-	TabLogBtn   widget.Clickable
-	TabInputBtn widget.Clickable
-	TabSetBtn   widget.Clickable
-
-	StartBtn    widget.Clickable
-	StopBtn     widget.Clickable
-	ClearLogBtn widget.Clickable
-
-	CancelBtn   widget.Clickable
-	SaveBtn     widget.Clickable
-	CopyBtn     widget.Clickable
-	ClearBtn    widget.Clickable
-	ResetDNSBtn widget.Clickable
-
-	inputEditor widget.Editor
-	settingsEd  widget.Editor
-
-	logList    widget.List
+	mu            sync.Mutex
+	window        *app.Window
+	theme         *material.Theme
+	themeMode     ThemeMode
+	ThemeBtn      widget.Clickable
+	currentTab    TabMode
+	TabLogBtn     widget.Clickable
+	TabInputBtn   widget.Clickable
+	TabSetBtn     widget.Clickable
+	StartBtn      widget.Clickable
+	StopBtn       widget.Clickable
+	ClearLogBtn   widget.Clickable
+	CancelBtn     widget.Clickable
+	SaveBtn       widget.Clickable
+	CopyBtn       widget.Clickable
+	ClearBtn      widget.Clickable
+	ResetDNSBtn   widget.Clickable
+	inputEditor   widget.Editor
+	settingsEd    widget.Editor
+	logList       widget.List
 	logEntries[]string
-
 	isRunning     bool
 	cancelFunc    context.CancelFunc
 	progress      float32
@@ -109,69 +93,50 @@ type AppState struct {
 }
 
 func main() {
-	ensureFilesExist()
-
-	go func() {
-		window := new(app.Window)
-		window.Option(
-			app.Title("DNStoHOSTS"),
-			app.Size(unit.Dp(800), unit.Dp(600)),
-		)
-		err := run(window)
-		if err != nil {
-			log.Fatal(err)
-		}
-		os.Exit(0)
-	}()
-	app.Main()
-}
-
-func ensureFilesExist() {
 	if _, err := os.Stat(InputFile); os.IsNotExist(err) {
 		os.WriteFile(InputFile,[]byte(defaultInput), 0644)
 	}
 	if _, err := os.Stat(SettingsFile); os.IsNotExist(err) {
 		os.WriteFile(SettingsFile,[]byte(defaultSettings), 0644)
 	}
-}
 
-func run(w *app.Window) error {
-	th := material.NewTheme()
-	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	go func() {
+		window := new(app.Window)
+		window.Option(app.Title("DNStoHOSTS"), app.Size(unit.Dp(800), unit.Dp(600)))
+		
+		th := material.NewTheme()
+		th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
 
-	state := &AppState{
-		window:        w,
-		theme:         th,
-		themeMode:     ThemeDark,
-		currentTab:    TabLog,
-		progressState: ProgressIdle,
-		logEntries:[]string{},
-	}
-
-	state.logList.Axis = layout.Vertical
-	state.inputEditor.Submit = false
-	state.settingsEd.Submit = false
-
-	state.loadEditorsFromFiles()
-	state.applyThemeColors()
-
-	var ops op.Ops
-	for {
-		switch e := w.Event().(type) {
-		case app.DestroyEvent:
-			return e.Err
-		case app.FrameEvent:
-			gtx := app.NewContext(&ops, e)
-			state.handleEvents(gtx)
-			state.layout(gtx)
-			e.Frame(gtx.Ops)
+		state := &AppState{
+			window:        window,
+			theme:         th,
+			themeMode:     ThemeDark,
+			currentTab:    TabLog,
+			progressState: ProgressIdle,
+			logEntries:[]string{},
 		}
-	}
+		state.logList.Axis = layout.Vertical
+		state.loadEditorsFromFiles()
+		state.applyThemeColors()
+
+		var ops op.Ops
+		for {
+			switch e := window.Event().(type) {
+			case app.DestroyEvent:
+				os.Exit(0)
+			case app.FrameEvent:
+				gtx := app.NewContext(&ops, e)
+				state.handleEvents(gtx)
+				state.layout(gtx)
+				e.Frame(gtx.Ops)
+			}
+		}
+	}()
+	app.Main()
 }
 
 func hex2color(hex string) color.NRGBA {
-	var r, g, b, a uint8
-	a = 255
+	var r, g, b, a uint8 = 0, 0, 0, 255
 	hex = strings.TrimPrefix(hex, "#")
 	if len(hex) == 6 {
 		fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
@@ -198,7 +163,6 @@ func (s *AppState) applyThemeColors() {
 func (s *AppState) loadEditorsFromFiles() {
 	inBytes, _ := os.ReadFile(InputFile)
 	s.inputEditor.SetText(string(inBytes))
-
 	setBytes, _ := os.ReadFile(SettingsFile)
 	s.settingsEd.SetText(string(setBytes))
 }
@@ -238,55 +202,30 @@ func (s *AppState) handleEvents(gtx layout.Context) {
 		}
 		s.applyThemeColors()
 	}
+	if s.TabLogBtn.Clicked(gtx) { s.currentTab = TabLog }
+	if s.TabInputBtn.Clicked(gtx) { s.currentTab = TabInput }
+	if s.TabSetBtn.Clicked(gtx) { s.currentTab = TabSettings }
 
-	if s.TabLogBtn.Clicked(gtx) {
-		s.currentTab = TabLog
-	}
-	if s.TabInputBtn.Clicked(gtx) {
-		s.currentTab = TabInput
-	}
-	if s.TabSetBtn.Clicked(gtx) {
-		s.currentTab = TabSettings
-	}
-
-	if s.StartBtn.Clicked(gtx) && !s.isRunning {
-		s.startResolving()
-	}
+	if s.StartBtn.Clicked(gtx) && !s.isRunning { s.startResolving() }
 	if s.StopBtn.Clicked(gtx) && s.isRunning {
 		s.appendLog("Stop requested, waiting for current operation to complete...")
-		if s.cancelFunc != nil {
-			s.cancelFunc()
-		}
+		if s.cancelFunc != nil { s.cancelFunc() }
 	}
-	if s.ClearLogBtn.Clicked(gtx) && !s.isRunning {
-		s.clearLog()
-	}
+	if s.ClearLogBtn.Clicked(gtx) && !s.isRunning { s.clearLog() }
 
-	if s.CancelBtn.Clicked(gtx) {
-		s.loadEditorsFromFiles()
-	}
+	if s.CancelBtn.Clicked(gtx) { s.loadEditorsFromFiles() }
 	if s.SaveBtn.Clicked(gtx) {
-		if s.currentTab == TabInput {
-			os.WriteFile(InputFile,[]byte(s.inputEditor.Text()), 0644)
-		} else if s.currentTab == TabSettings {
-			os.WriteFile(SettingsFile,[]byte(s.settingsEd.Text()), 0644)
-		}
+		if s.currentTab == TabInput { os.WriteFile(InputFile,[]byte(s.inputEditor.Text()), 0644) }
+		if s.currentTab == TabSettings { os.WriteFile(SettingsFile,[]byte(s.settingsEd.Text()), 0644) }
 	}
 	if s.CopyBtn.Clicked(gtx) {
-		textToCopy := ""
-		if s.currentTab == TabInput {
-			textToCopy = s.inputEditor.Text()
-		} else if s.currentTab == TabSettings {
-			textToCopy = s.settingsEd.Text()
-		}
-		clipboard.WriteOp{Text: textToCopy}.Add(gtx.Ops)
+		txt := s.inputEditor.Text()
+		if s.currentTab == TabSettings { txt = s.settingsEd.Text() }
+		clipboard.WriteOp{Text: txt}.Add(gtx.Ops)
 	}
 	if s.ClearBtn.Clicked(gtx) {
-		if s.currentTab == TabInput {
-			s.inputEditor.SetText("")
-		} else if s.currentTab == TabSettings {
-			s.settingsEd.SetText("")
-		}
+		if s.currentTab == TabInput { s.inputEditor.SetText("") }
+		if s.currentTab == TabSettings { s.settingsEd.SetText("") }
 	}
 	if s.ResetDNSBtn.Clicked(gtx) && s.currentTab == TabSettings {
 		s.settingsEd.SetText(defaultSettings)
@@ -295,29 +234,21 @@ func (s *AppState) handleEvents(gtx layout.Context) {
 
 func (s *AppState) layout(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return s.layoutTopBar(gtx)
-		}),
+		layout.Rigid(s.layoutTopBar),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			switch s.currentTab {
-			case TabLog:
-				return s.layoutLogArea(gtx)
-			case TabInput:
-				return s.layoutEditorArea(gtx, &s.inputEditor)
-			case TabSettings:
-				return s.layoutEditorArea(gtx, &s.settingsEd)
+			case TabLog: return s.layoutLogArea(gtx)
+			case TabInput: return s.layoutEditorArea(gtx, &s.inputEditor)
+			case TabSettings: return s.layoutEditorArea(gtx, &s.settingsEd)
 			}
 			return layout.Dimensions{}
 		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return s.layoutProgressBar(gtx)
-		}),
+		layout.Rigid(s.layoutProgressBar),
 	)
 }
 
 func (s *AppState) layoutTopBar(gtx layout.Context) layout.Dimensions {
-	margins := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}
-	return margins.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx,
@@ -332,11 +263,8 @@ func (s *AppState) layoutTopBar(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						themeText := "Dark Theme"
-						if s.themeMode == ThemeLight {
-							themeText = "Light Theme"
-						}
-						btn := material.Button(s.theme, &s.ThemeBtn, themeText)
-						return btn.Layout(gtx)
+						if s.themeMode == ThemeLight { themeText = "Light Theme" }
+						return material.Button(s.theme, &s.ThemeBtn, themeText).Layout(gtx)
 					}),
 				)
 			}),
@@ -344,106 +272,76 @@ func (s *AppState) layoutTopBar(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if s.currentTab == TabLog {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							btn := material.Button(s.theme, &s.StartBtn, "Start")
-							if s.isRunning {
-								gtx = gtx.Disabled()
-							}
-							return btn.Layout(gtx)
-						}),
+						layout.Rigid(s.drawButton(gtx, &s.StartBtn, "Start", s.isRunning)),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							btn := material.Button(s.theme, &s.StopBtn, "Stop")
-							if !s.isRunning {
-								gtx = gtx.Disabled()
-							}
-							return btn.Layout(gtx)
-						}),
+						layout.Rigid(s.drawButton(gtx, &s.StopBtn, "Stop", !s.isRunning)),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							btn := material.Button(s.theme, &s.ClearLogBtn, "Clear Log")
-							if s.isRunning {
-								gtx = gtx.Disabled()
-							}
-							return btn.Layout(gtx)
-						}),
-					)
-				} else {
-					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-						layout.Rigid(s.drawButton(gtx, &s.CancelBtn, "Cancel", false)),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-						layout.Rigid(s.drawButton(gtx, &s.SaveBtn, "Save", false)),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-						layout.Rigid(s.drawButton(gtx, &s.CopyBtn, "Copy", false)),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-						layout.Rigid(s.drawButton(gtx, &s.ClearBtn, "Clear", false)),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if s.currentTab == TabSettings {
-								return s.drawButton(gtx, &s.ResetDNSBtn, "Reset DNS to dns.google", false)
-							}
-							return layout.Dimensions{}
-						}),
+						layout.Rigid(s.drawButton(gtx, &s.ClearLogBtn, "Clear Log", s.isRunning)),
 					)
 				}
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Rigid(s.drawButton(gtx, &s.CancelBtn, "Cancel", false)),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+					layout.Rigid(s.drawButton(gtx, &s.SaveBtn, "Save", false)),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+					layout.Rigid(s.drawButton(gtx, &s.CopyBtn, "Copy", false)),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+					layout.Rigid(s.drawButton(gtx, &s.ClearBtn, "Clear", false)),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if s.currentTab == TabSettings { return s.drawButton(gtx, &s.ResetDNSBtn, "Reset DNS to dns.google", false)(gtx) }
+						return layout.Dimensions{}
+					}),
+				)
 			}),
 		)
 	})
 }
 
-func (s *AppState) drawTabButton(gtx layout.Context, clk *widget.Clickable, txt string, active bool) layout.Dimensions {
-	btn := material.Button(s.theme, clk, txt)
-	if active {
-		btn.Background = hex2color("#0078D7")
-		btn.Color = hex2color("#FFFFFF")
-	} else {
-		btn.Background = s.theme.ContrastBg
-		btn.Color = s.theme.ContrastFg
+func (s *AppState) drawTabButton(gtx layout.Context, clk *widget.Clickable, txt string, active bool) func(gtx layout.Context) layout.Dimensions {
+	return func(gtx layout.Context) layout.Dimensions {
+		btn := material.Button(s.theme, clk, txt)
+		if active {
+			btn.Background = hex2color("#0078D7")
+			btn.Color = hex2color("#FFFFFF")
+		} else {
+			btn.Background = s.theme.ContrastBg
+			btn.Color = s.theme.ContrastFg
+		}
+		return btn.Layout(gtx)
 	}
-	return btn.Layout(gtx)
 }
 
-func (s *AppState) drawButton(gtx layout.Context, clk *widget.Clickable, txt string, disabled bool) layout.Dimensions {
-	if disabled {
-		gtx = gtx.Disabled()
+func (s *AppState) drawButton(gtx layout.Context, clk *widget.Clickable, txt string, disabled bool) func(gtx layout.Context) layout.Dimensions {
+	return func(gtx layout.Context) layout.Dimensions {
+		if disabled { gtx = gtx.Disabled() }
+		return material.Button(s.theme, clk, txt).Layout(gtx)
 	}
-	btn := material.Button(s.theme, clk, txt)
-	return btn.Layout(gtx)
 }
 
 func (s *AppState) layoutLogArea(gtx layout.Context) layout.Dimensions {
 	bgColor := hex2color("#1E1E1E")
-	if s.themeMode == ThemeLight {
-		bgColor = hex2color("#F5F5F5")
-	}
-
+	if s.themeMode == ThemeLight { bgColor = hex2color("#F5F5F5") }
 	paint.FillShape(gtx.Ops, bgColor, clip.Rect{Max: gtx.Constraints.Max}.Op())
 
-	margins := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}
-	return margins.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		s.mu.Lock()
 		count := len(s.logEntries)
 		s.mu.Unlock()
-
-		list := material.List(s.theme, &s.logList)
-		return list.Layout(gtx, count, func(gtx layout.Context, index int) layout.Dimensions {
+		return material.List(s.theme, &s.logList).Layout(gtx, count, func(gtx layout.Context, index int) layout.Dimensions {
 			s.mu.Lock()
 			textLine := s.logEntries[index]
 			s.mu.Unlock()
-			label := material.Label(s.theme, unit.Sp(14), textLine)
-			return label.Layout(gtx)
+			return material.Label(s.theme, unit.Sp(14), textLine).Layout(gtx)
 		})
 	})
 }
 
 func (s *AppState) layoutEditorArea(gtx layout.Context, ed *widget.Editor) layout.Dimensions {
 	bgColor := hex2color("#252526")
-	if s.themeMode == ThemeLight {
-		bgColor = hex2color("#FFFFFF")
-	}
+	if s.themeMode == ThemeLight { bgColor = hex2color("#FFFFFF") }
 	paint.FillShape(gtx.Ops, bgColor, clip.Rect{Max: gtx.Constraints.Max}.Op())
-	margins := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}
-	return margins.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		mEd := material.Editor(s.theme, ed, "Type here...")
 		mEd.TextSize = unit.Sp(14)
 		return mEd.Layout(gtx)
@@ -453,32 +351,20 @@ func (s *AppState) layoutEditorArea(gtx layout.Context, ed *widget.Editor) layou
 func (s *AppState) layoutProgressBar(gtx layout.Context) layout.Dimensions {
 	height := 10
 	s.mu.Lock()
-	p := s.progress
-	st := s.progressState
+	p, st := s.progress, s.progressState
 	s.mu.Unlock()
 
-	var barColor color.NRGBA
-	var bgBarColor color.NRGBA
-
+	var barColor, bgBarColor color.NRGBA
 	switch st {
-	case ProgressIdle:
-		barColor = hex2color("#808080")
-		bgBarColor = hex2color("#808080")
-	case ProgressRunning:
-		barColor = hex2color("#0078D7")
-		bgBarColor = hex2color("#404040")
-	case ProgressDone:
-		barColor = hex2color("#28A745")
-		bgBarColor = hex2color("#28A745")
+	case ProgressIdle: barColor, bgBarColor = hex2color("#808080"), hex2color("#808080")
+	case ProgressRunning: barColor, bgBarColor = hex2color("#0078D7"), hex2color("#404040")
+	case ProgressDone: barColor, bgBarColor = hex2color("#28A745"), hex2color("#28A745")
 	}
 
 	return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		width := gtx.Constraints.Max.X
 		fillWidth := int(float32(width) * p)
-
-		if st == ProgressIdle || st == ProgressDone {
-			fillWidth = width
-		}
+		if st == ProgressIdle || st == ProgressDone { fillWidth = width }
 
 		bgRect := clip.Rect{Max: layout.Dimensions{Size: gtx.Constraints.Max}.Size}
 		bgRect.Max.Y = height
@@ -490,12 +376,9 @@ func (s *AppState) layoutProgressBar(gtx layout.Context) layout.Dimensions {
 			fgRect.Max.X = fillWidth
 			paint.FillShape(gtx.Ops, barColor, fgRect.Op())
 		}
-
 		return layout.Dimensions{Size: bgRect.Max}
 	})
 }
-
-// --- DNS Resolving Logic ---
 
 type Settings struct {
 	Server string
@@ -507,35 +390,19 @@ type Settings struct {
 func parseSettings() Settings {
 	setBytes, _ := os.ReadFile(SettingsFile)
 	lines := strings.Split(string(setBytes), "\n")
-
-	settings := Settings{
-		Server: "dns.google",
-		Port:   "",
-		IPv4:   true,
-		IPv6:   false,
-	}
+	settings := Settings{Server: "dns.google", Port: "", IPv4: true, IPv6: false}
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#") || line == "" {
-			continue
-		}
+		if strings.HasPrefix(line, "#") || line == "" { continue }
 		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		if len(parts) != 2 { continue }
 		val := strings.TrimSpace(parts[1])
-
-		switch key {
-		case "server":
-			settings.Server = val
-		case "port":
-			settings.Port = val
-		case "ipv4":
-			settings.IPv4 = (val == "true")
-		case "ipv6":
-			settings.IPv6 = (val == "true")
+		switch strings.ToLower(strings.TrimSpace(parts[0])) {
+		case "server": settings.Server = val
+		case "port": settings.Port = val
+		case "ipv4": settings.IPv4 = (val == "true")
+		case "ipv6": settings.IPv6 = (val == "true")
 		}
 	}
 	return settings
@@ -543,9 +410,7 @@ func parseSettings() Settings {
 
 func (s *AppState) startResolving() {
 	s.mu.Lock()
-	s.isRunning = true
-	s.progressState = ProgressRunning
-	s.progress = 0
+	s.isRunning, s.progressState, s.progress = true, ProgressRunning, 0
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancelFunc = cancel
 	s.mu.Unlock()
@@ -554,21 +419,17 @@ func (s *AppState) startResolving() {
 		defer func() {
 			s.mu.Lock()
 			s.isRunning = false
-			if s.progressState == ProgressRunning {
-				s.progressState = ProgressDone
-				s.progress = 1.0
-			}
+			if s.progressState == ProgressRunning { s.progressState, s.progress = ProgressDone, 1.0 }
 			s.mu.Unlock()
 			s.window.Invalidate()
 		}()
 
 		s.appendLog("Starting to resolve domains...")
 		s.appendLog("Reading settings.txt...")
-
 		cfg := parseSettings()
 		s.appendLog(fmt.Sprintf("DNS Server: %s", cfg.Server))
 		s.appendLog(fmt.Sprintf("IPv4: %t, IPv6: %t", cfg.IPv4, cfg.IPv6))
-
+		
 		s.appendLog("Reading input.txt...")
 		inputBytes, err := os.ReadFile(InputFile)
 		if err != nil {
@@ -577,13 +438,10 @@ func (s *AppState) startResolving() {
 		}
 
 		lines := strings.Split(string(inputBytes), "\n")
-
 		var totalDomains int
 		for _, line := range lines {
 			l := strings.TrimSpace(line)
-			if l != "" && !strings.HasPrefix(l, "#") {
-				totalDomains++
-			}
+			if l != "" && !strings.HasPrefix(l, "#") { totalDomains++ }
 		}
 
 		s.appendLog(fmt.Sprintf("Found %d domains to resolve", totalDomains))
@@ -605,38 +463,30 @@ func (s *AppState) startResolving() {
 
 			if l == "" || strings.HasPrefix(l, "#") {
 				outputLines = append(outputLines, origLine)
-				if l != "" {
-					s.appendLog(origLine)
-				}
+				if l != "" { s.appendLog(origLine) }
 				continue
 			}
 
-			domain := l
-			s.appendLog("Resolving: " + domain)
-
-			ips := resolveDomainDoH(ctx, cfg, domain)
+			s.appendLog("Resolving: " + l)
+			ips := resolveDomainDoH(ctx, cfg, l)
 
 			if len(ips) == 0 {
-				s.appendLog(fmt.Sprintf("  No records found for %s", domain))
-				outputLines = append(outputLines, fmt.Sprintf("No records found: %s", domain))
+				s.appendLog(fmt.Sprintf("  No records found for %s", l))
+				outputLines = append(outputLines, fmt.Sprintf("No records found: %s", l))
 			} else {
 				for _, ip := range ips {
-					s.appendLog(fmt.Sprintf("  %s %s", ip, domain))
-					outputLines = append(outputLines, fmt.Sprintf("%s %s", ip, domain))
+					s.appendLog(fmt.Sprintf("  %s %s", ip, l))
+					outputLines = append(outputLines, fmt.Sprintf("%s %s", ip, l))
 				}
 			}
 
 			resolvedCount++
-			if totalDomains > 0 {
-				s.setProgress(float32(resolvedCount)/float32(totalDomains), ProgressRunning)
-			}
+			if totalDomains > 0 { s.setProgress(float32(resolvedCount)/float32(totalDomains), ProgressRunning) }
 		}
 
 		s.appendLog("----------------------------------------")
 		s.appendLog("Writing output.txt...")
-
-		outText := strings.Join(outputLines, "\n")
-		err = os.WriteFile(OutputFile,[]byte(outText), 0644)
+		err = os.WriteFile(OutputFile,[]byte(strings.Join(outputLines, "\n")), 0644)
 		if err != nil {
 			s.appendLog("Failed to write output.txt: " + err.Error())
 		} else {
@@ -645,10 +495,18 @@ func (s *AppState) startResolving() {
 	}()
 }
 
-// resolveDomainDoH makes binary DNS over HTTPS requests (RFC 8484)
-func resolveDomainDoH(ctx context.Context, cfg Settings, domain string) []string {
+func resolveDomainDoH(ctx context.Context, cfg Settings, domain string)[]string {
 	var ips[]string
+	urlStr := "https://" + cfg.Server
+	if cfg.Port != "" { urlStr += ":" + cfg.Port }
+	urlStr += "/dns-query"
 
+	client := &http.Client{Timeout: 10 * time.Second}
+	fqdn := dns.Fqdn(domain)
+
+	var qTypes
+	func resolveDomainDoH(ctx context.Context, cfg Settings, domain string) []string {
+	var ips[]string
 	urlStr := "https://" + cfg.Server
 	if cfg.Port != "" {
 		urlStr += ":" + cfg.Port
@@ -658,4 +516,59 @@ func resolveDomainDoH(ctx context.Context, cfg Settings, domain string) []string
 	client := &http.Client{Timeout: 10 * time.Second}
 	fqdn := dns.Fqdn(domain)
 
-	var qTypes
+	var qTypes[]uint16
+	if cfg.IPv4 {
+		qTypes = append(qTypes, dns.TypeA)
+	}
+	if cfg.IPv6 {
+		qTypes = append(qTypes, dns.TypeAAAA)
+	}
+
+	for _, qType := range qTypes {
+		m := new(dns.Msg)
+		m.SetQuestion(fqdn, qType)
+		m.RecursionDesired = true
+
+		// Упаковываем запрос в бинарный формат (RFC 1035)
+		wire, err := m.Pack()
+		if err != nil {
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(wire))
+		if err != nil {
+			continue
+		}
+		// Устанавливаем правильные заголовки для DoH (RFC 8484)
+		req.Header.Set("Content-Type", "application/dns-message")
+		req.Header.Set("Accept", "application/dns-message")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			continue
+		}
+
+		// Распаковываем бинарный ответ
+		msg := new(dns.Msg)
+		if err := msg.Unpack(body); err != nil {
+			continue
+		}
+
+		// Извлекаем IP адреса из секции Answer
+		for _, ans := range msg.Answer {
+			if a, ok := ans.(*dns.A); ok {
+				ips = append(ips, a.A.String())
+			} else if aaaa, ok := ans.(*dns.AAAA); ok {
+				ips = append(ips, aaaa.AAAA.String())
+			}
+		}
+	}
+
+	return ips
+}
