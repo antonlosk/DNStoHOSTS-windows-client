@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall" // Added for hiding console windows
 	"time"
 
 	"gioui.org/app"
@@ -94,7 +95,7 @@ func ensureFilesExist() {
 	}
 
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
-		// Port 443 is now active by default
+		// Default settings with active port 443
 		content := "server=dns.google\nport=443\nipv4=true\nipv6=false\n"
 		os.WriteFile("settings.txt", []byte(content), 0644)
 	}
@@ -280,9 +281,13 @@ func (ui *UI) addLog(msg string) {
 	ui.Window.Invalidate()
 }
 
+// openFile opens the specified file using the default system handler without showing a console flicker
 func openFile(fn string) {
 	path, _ := filepath.Abs(fn)
-	exec.Command("cmd", "/c", "start", "", path).Start()
+	cmd := exec.Command("cmd", "/c", "start", "", path)
+	// HideWindow: true prevents the "black box" console from appearing on Windows
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	_ = cmd.Start()
 }
 
 func (ui *UI) startResolving(ctx context.Context) {
