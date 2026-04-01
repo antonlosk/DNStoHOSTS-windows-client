@@ -94,8 +94,8 @@ func ensureFilesExist() {
 	}
 
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
-		// Добавлен #port=443
-		content := "server=dns.google\n#port=443\nipv4=true\nipv6=false\n"
+		// Create settings.txt with active port=443
+		content := "server=dns.google\nport=443\nipv4=true\nipv6=false\n"
 		os.WriteFile("settings.txt", []byte(content), 0644)
 	}
 }
@@ -330,7 +330,6 @@ func (ui *UI) startResolving(ctx context.Context) {
 		} else {
 			for _, ip := range found {
 				ui.addLog("   Found: " + ip)
-				// Исправлено: теперь строго один пробел между IP и доменом
 				output = append(output, fmt.Sprintf("%s %s", ip, trimmed))
 			}
 		}
