@@ -58,14 +58,18 @@ jobs:
           GOOS: windows
           GOARCH: amd64
         run: |
-          # Инициализируем go.mod, если его нет (обрати внимание на пробел после if)
+          # Инициализируем go.mod, если его нет
           if [ ! -f go.mod ]; then
             go mod init DNStoHOSTS
           fi
           # Скачиваем все зависимости
           go mod tidy
           
+          # Генерируем файл ресурсов с иконкой для Windows
+          go run github.com/akavel/rsrc@latest -ico icon.ico -o rsrc.syso
+          
           # Собираем с флагом -H=windowsgui (чтобы скрыть черную консоль) и оптимизациями
+          # Компилятор Go автоматически подхватит rsrc.syso из текущей папки
           go build -ldflags="-H=windowsgui -s -w" -trimpath -o DNStoHOSTS_${{ steps.version.outputs.version }}.exe main.go
 
       - name: Create GitHub Release
