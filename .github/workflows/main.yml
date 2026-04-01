@@ -61,13 +61,16 @@ jobs:
           fi
           go mod tidy
           
-          # 1. Generate resource file. 
-          # rsrc is compiled and executed natively on the runner (Linux).
-          go run github.com/akavel/rsrc@latest -ico icon.ico -o rsrc.syso
+          # 1. Generate resource file (rsrc.syso)
+          # We specify -arch amd64 to match our target build
+          go run github.com/akavel/rsrc@latest -arch amd64 -ico icon.ico -o rsrc.syso
           
-          # 2. Build the main Windows executable.
-          # Set GOOS and GOARCH locally for the build command only.
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-H=windowsgui -s -w" -trimpath -o DNStoHOSTS_${{ steps.version.outputs.version }}.exe main.go
+          # 2. Build the project
+          # IMPORTANT: We use "." instead of "main.go" so the compiler includes rsrc.syso
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags="-H=windowsgui -s -w" \
+            -trimpath \
+            -o DNStoHOSTS_${{ steps.version.outputs.version }}.exe .
 
       - name: Create GitHub Release
         env:
