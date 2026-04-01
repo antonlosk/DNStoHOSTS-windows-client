@@ -94,7 +94,7 @@ func ensureFilesExist() {
 	}
 
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
-		// Create settings.txt with active port=443
+		// Port 443 is now active by default
 		content := "server=dns.google\nport=443\nipv4=true\nipv6=false\n"
 		os.WriteFile("settings.txt", []byte(content), 0644)
 	}
@@ -291,7 +291,6 @@ func (ui *UI) startResolving(ctx context.Context) {
 	
 	lines, err := readLines("input.txt")
 	if err != nil {
-		ui.addLog("Error: input.txt not found")
 		ui.finish(StateIdle)
 		return
 	}
