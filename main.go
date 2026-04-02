@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall" // Added for hiding console windows
+	"syscall"
 	"time"
 
 	"gioui.org/app"
@@ -55,10 +55,13 @@ type UI struct {
 	LogMutex     sync.Mutex
 	NewLogAdded  bool
 
+	StateMutex   sync.Mutex // Protects State, CancelFunc, and counters
 	State        AppState
-	ProgressAnim float32
-
 	CancelFunc   context.CancelFunc
+	TotalLines   int        // Total domains to process
+	CurrentLine  int        // Current domain being processed
+
+	ProgressAnim float32
 	Window       *app.Window
 }
 
@@ -95,7 +98,6 @@ func ensureFilesExist() {
 	}
 
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
-		// Default settings with active port 443
 		content := "server=dns.google\nport=443\nipv4=true\nipv6=false\n"
 		os.WriteFile("settings.txt", []byte(content), 0644)
 	}
@@ -132,16 +134,26 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 		ui.IsDarkMode = ui.ThemeToggle.Value
 	}
 
-	if ui.BtnStart.Clicked(gtx) && ui.State != StateResolving {
+	ui.StateMutex.Lock()
+	currentState := ui.State
+	cancelFunc := ui.CancelFunc
+	ui.StateMutex.Unlock()
+
+	if ui.BtnStart.Clicked(gtx) && currentState != StateResolving {
+		ui.StateMutex.Lock()
 		ui.State = StateResolving
+		ui.TotalLines = 0
+		ui.CurrentLine = 0
 		ctx, cancel := context.WithCancel(context.Background())
 		ui.CancelFunc = cancel
+		ui.StateMutex.Unlock()
+		
 		go ui.startResolving(ctx)
 	}
 
-	if ui.BtnStop.Clicked(gtx) && ui.State == StateResolving {
-		if ui.CancelFunc != nil {
-			ui.CancelFunc()
+	if ui.BtnStop.Clicked(gtx) && currentState == StateResolving {
+		if cancelFunc != nil {
+			cancelFunc()
 			ui.addLog("Stopping...")
 		}
 	}
@@ -150,7 +162,12 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 		ui.LogMutex.Lock()
 		ui.Logs = []string{}
 		ui.LogMutex.Unlock()
+		
+		ui.StateMutex.Lock()
 		ui.State = StateIdle
+		ui.TotalLines = 0
+		ui.CurrentLine = 0
+		ui.StateMutex.Unlock()
 	}
 
 	if ui.BtnInput.Clicked(gtx) { openFile("input.txt") }
@@ -160,19 +177,24 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 
 func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	ui.updateTheme()
-	if ui.State == StateResolving {
-		ui.ProgressAnim += 0.03
-		if ui.ProgressAnim > math.Pi*2 { ui.ProgressAnim = 0 }
+
+	ui.StateMutex.Lock()
+	currentState := ui.State
+	total := ui.TotalLines
+	current := ui.CurrentLine
+	ui.StateMutex.Unlock()
+
+	if currentState == StateResolving {
 		ui.Window.Invalidate()
 	}
 
 	paint.Fill(gtx.Ops, ui.Theme.Bg)
 
 	ui.LogMutex.Lock()
-	if ui.NewLogAdded {
+	if ui.NewLogAdded && !ui.LogList.Position.BeforeEnd {
 		ui.LogList.Position.First = len(ui.Logs)
-		ui.NewLogAdded = false
 	}
+	ui.NewLogAdded = false
 	logsCopy := append([]string(nil), ui.Logs...)
 	ui.LogMutex.Unlock()
 
@@ -184,7 +206,7 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								btn := material.Button(ui.Theme, &ui.BtnStart, "Start")
-								if ui.State == StateResolving {
+								if currentState == StateResolving {
 									btn.Background = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
 								} else {
 									btn.Background = color.NRGBA{R: 0, G: 150, B: 0, A: 255}
@@ -238,30 +260,52 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 		}),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, ui.drawProgressBar)
+			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						// Display numeric progress counter
+						txt := fmt.Sprintf("Processed: %d / %d", current, total)
+						if currentState == StateIdle { txt = "Ready" }
+						lbl := material.Label(ui.Theme, unit.Sp(12), txt)
+						return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.drawProgressBar(gtx, currentState, current, total)
+					}),
+				)
+			})
 		}),
 	)
 }
 
-func (ui *UI) drawProgressBar(gtx layout.Context) layout.Dimensions {
+func (ui *UI) drawProgressBar(gtx layout.Context, currentState AppState, current, total int) layout.Dimensions {
 	height := gtx.Dp(unit.Dp(10))
 	width := gtx.Constraints.Max.X
+	
+	// Background of the bar
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 200, B: 200, A: 255}, clip.Rect{Max: image.Pt(width, height)}.Op())
 
 	var fgColor color.NRGBA
-	switch ui.State {
+	var progressWidth int
+
+	switch currentState {
 	case StateIdle:
 		fgColor = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
-		paint.FillShape(gtx.Ops, fgColor, clip.Rect{Max: image.Pt(width, height)}.Op())
+		progressWidth = 0
 	case StateDone:
 		fgColor = color.NRGBA{R: 0, G: 180, B: 0, A: 255}
-		paint.FillShape(gtx.Ops, fgColor, clip.Rect{Max: image.Pt(width, height)}.Op())
+		progressWidth = width
 	case StateResolving:
 		fgColor = color.NRGBA{R: 0, G: 120, B: 215, A: 255}
-		barW := width / 4
-		pos := float32(width-barW) * (float32(math.Sin(float64(ui.ProgressAnim))) + 1.0) / 2.0
-		paint.FillShape(gtx.Ops, fgColor, clip.Rect{Min: image.Pt(int(pos), 0), Max: image.Pt(int(pos)+barW, height)}.Op())
+		if total > 0 {
+			progressWidth = int(float32(width) * (float32(current) / float32(total)))
+		}
 	}
+	
+	if progressWidth > 0 {
+		paint.FillShape(gtx.Ops, fgColor, clip.Rect{Max: image.Pt(progressWidth, height)}.Op())
+	}
+	
 	return layout.Dimensions{Size: image.Pt(width, height)}
 }
 
@@ -281,11 +325,9 @@ func (ui *UI) addLog(msg string) {
 	ui.Window.Invalidate()
 }
 
-// openFile opens the specified file using the default system handler without showing a console flicker
 func openFile(fn string) {
 	path, _ := filepath.Abs(fn)
 	cmd := exec.Command("cmd", "/c", "start", "", path)
-	// HideWindow: true prevents the "black box" console from appearing on Windows
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	_ = cmd.Start()
 }
@@ -300,13 +342,26 @@ func (ui *UI) startResolving(ctx context.Context) {
 		return
 	}
 
+	// Calculate total valid tasks (excluding empty lines)
+	var tasks []string
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			tasks = append(tasks, l)
+		}
+	}
+
+	ui.StateMutex.Lock()
+	ui.TotalLines = len(tasks)
+	ui.CurrentLine = 0
+	ui.StateMutex.Unlock()
+
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	port := cfg.Port
 	if port == "" { port = "443" }
 	dohURL := fmt.Sprintf("https://%s:%s/dns-query", cfg.Server, port)
 
 	var output []string
-	for _, line := range lines {
+	for _, line := range tasks {
 		select {
 		case <-ctx.Done():
 			ui.addLog("Cancelled.")
@@ -316,10 +371,10 @@ func (ui *UI) startResolving(ctx context.Context) {
 		}
 
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" { continue }
 		if strings.HasPrefix(trimmed, "#") {
 			output = append(output, trimmed)
 			ui.addLog(trimmed)
+			ui.incrementProgress()
 			continue
 		}
 
@@ -337,6 +392,7 @@ func (ui *UI) startResolving(ctx context.Context) {
 				output = append(output, fmt.Sprintf("%s %s", ip, trimmed))
 			}
 		}
+		ui.incrementProgress()
 	}
 
 	writeLines("output.txt", output)
@@ -344,9 +400,19 @@ func (ui *UI) startResolving(ctx context.Context) {
 	ui.finish(StateDone)
 }
 
+func (ui *UI) incrementProgress() {
+	ui.StateMutex.Lock()
+	ui.CurrentLine++
+	ui.StateMutex.Unlock()
+	ui.Window.Invalidate()
+}
+
 func (ui *UI) finish(s AppState) { 
+	ui.StateMutex.Lock()
 	ui.State = s
 	ui.CancelFunc = nil
+	ui.StateMutex.Unlock()
+	
 	ui.Window.Invalidate() 
 }
 
