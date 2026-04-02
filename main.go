@@ -35,6 +35,7 @@ const (
 	StateIdle AppState = iota
 	StateResolving
 	StateDone
+	StateCancelled
 )
 
 type UI struct {
@@ -152,7 +153,7 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 	if ui.BtnStop.Clicked(gtx) && currentState == StateResolving {
 		if cancelFunc != nil {
 			cancelFunc()
-			ui.addLog("Stopping...")
+			// Status transition is handled in startResolving's loop
 		}
 	}
 
@@ -261,8 +262,17 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						txt := fmt.Sprintf("Processed: %d / %d", current, total)
-						if currentState == StateIdle { txt = "Ready" }
+						var txt string
+						switch currentState {
+						case StateResolving:
+							txt = fmt.Sprintf("Processing: %d / %d", current, total)
+						case StateDone:
+							txt = fmt.Sprintf("Done: %d / %d", current, total)
+						case StateCancelled:
+							txt = fmt.Sprintf("Cancelled: %d / %d", current, total)
+						default:
+							txt = "Ready"
+						}
 						lbl := material.Label(ui.Theme, unit.Sp(12), txt)
 						return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
 					}),
@@ -290,6 +300,11 @@ func (ui *UI) drawProgressBar(gtx layout.Context, currentState AppState, current
 	case StateDone:
 		fgColor = color.NRGBA{R: 0, G: 180, B: 0, A: 255}
 		progressWidth = width
+	case StateCancelled:
+		fgColor = color.NRGBA{R: 255, G: 165, B: 0, A: 255} // Orange for Cancelled
+		if total > 0 {
+			progressWidth = int(float32(width) * (float32(current) / float32(total)))
+		}
 	case StateResolving:
 		fgColor = color.NRGBA{R: 0, G: 120, B: 215, A: 255}
 		if total > 0 {
@@ -358,7 +373,7 @@ func (ui *UI) startResolving(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			ui.addLog("Cancelled.")
-			ui.finish(StateIdle)
+			ui.finish(StateCancelled)
 			return
 		default:
 		}
