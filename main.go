@@ -8,7 +8,6 @@ import (
 	"image"
 	"image/color"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -55,13 +54,12 @@ type UI struct {
 	LogMutex     sync.Mutex
 	NewLogAdded  bool
 
-	StateMutex   sync.Mutex // Protects State, CancelFunc, and counters
+	StateMutex   sync.Mutex
 	State        AppState
 	CancelFunc   context.CancelFunc
-	TotalLines   int        // Total domains to process
-	CurrentLine  int        // Current domain being processed
+	TotalLines   int
+	CurrentLine  int
 
-	ProgressAnim float32
 	Window       *app.Window
 }
 
@@ -263,7 +261,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						// Display numeric progress counter
 						txt := fmt.Sprintf("Processed: %d / %d", current, total)
 						if currentState == StateIdle { txt = "Ready" }
 						lbl := material.Label(ui.Theme, unit.Sp(12), txt)
@@ -281,8 +278,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 func (ui *UI) drawProgressBar(gtx layout.Context, currentState AppState, current, total int) layout.Dimensions {
 	height := gtx.Dp(unit.Dp(10))
 	width := gtx.Constraints.Max.X
-	
-	// Background of the bar
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 200, B: 200, A: 255}, clip.Rect{Max: image.Pt(width, height)}.Op())
 
 	var fgColor color.NRGBA
@@ -305,7 +300,6 @@ func (ui *UI) drawProgressBar(gtx layout.Context, currentState AppState, current
 	if progressWidth > 0 {
 		paint.FillShape(gtx.Ops, fgColor, clip.Rect{Max: image.Pt(progressWidth, height)}.Op())
 	}
-	
 	return layout.Dimensions{Size: image.Pt(width, height)}
 }
 
@@ -342,7 +336,6 @@ func (ui *UI) startResolving(ctx context.Context) {
 		return
 	}
 
-	// Calculate total valid tasks (excluding empty lines)
 	var tasks []string
 	for _, l := range lines {
 		if strings.TrimSpace(l) != "" {
@@ -412,7 +405,6 @@ func (ui *UI) finish(s AppState) {
 	ui.State = s
 	ui.CancelFunc = nil
 	ui.StateMutex.Unlock()
-	
 	ui.Window.Invalidate() 
 }
 
@@ -420,7 +412,6 @@ func resolveBinaryDoH(ctx context.Context, client *http.Client, url, domain stri
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), qtype)
 	m.RecursionDesired = true
-
 	buf, err := m.Pack()
 	if err != nil { return nil }
 
@@ -432,12 +423,10 @@ func resolveBinaryDoH(ctx context.Context, client *http.Client, url, domain stri
 	resp, err := client.Do(req)
 	if err != nil { return nil }
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK { return nil }
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil { return nil }
-
 	respMsg := new(dns.Msg)
 	if err := respMsg.Unpack(body); err != nil { return nil }
 
