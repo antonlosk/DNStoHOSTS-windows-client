@@ -80,9 +80,13 @@ namespace DNStoHOSTS
             _cts = new CancellationTokenSource();
             MainProgress.Foreground = (SolidColorBrush)FindResource("ProgressBlue");
 
-            try { await Task.Run(() => ProcessDomains(_cts.Token)); MainProgress.Foreground = (SolidColorBrush)FindResource("ProgressGreen"); }
-            catch (OperationCanceledException) { Log("Stopped."); }
-            catch (Exception ex) { Log("Error: " + ex.Message); }
+            try 
+            { 
+                await Task.Run(() => ProcessDomains(_cts.Token)); 
+                MainProgress.Foreground = (SolidColorBrush)FindResource("ProgressGreen"); 
+            }
+            catch (OperationCanceledException) { Log("Stopped by user."); }
+            catch (Exception ex) { Log("Critical Error: " + ex.Message); }
             finally { _cts.Dispose(); _cts = null; }
         }
 
@@ -106,14 +110,16 @@ namespace DNStoHOSTS
 
                 string domain = line.Trim();
                 Log("Resolving: " + domain);
-                var ips = new List<string>();
                 
-                if (settings.ipv4) ips.AddRange(await Resolve(domain, 1, settings, token));
-                if (settings.ipv6) ips.AddRange(await Resolve(domain, 28, settings, token));
+                var ips = new List<string>();
+                var errors = new List<string>();
+                
+                if (settings.ipv4) ips.AddRange(await Resolve(domain, 1, settings, token, errors));
+                if (settings.ipv6) ips.AddRange(await Resolve(domain, 28, settings, token, errors));
 
                 if (!ips.Any())
                 {
-                    Log("  [!] No records found for " + domain);
+                    foreach(var err in errors.Distinct()) Log($"  [!] {err}");
                     output.Add("# No records: " + domain);
                 }
                 else 
@@ -132,31 +138,49 @@ namespace DNStoHOSTS
             Log("Done. Saved to " + OutputFile);
         }
 
-        private async Task<List<string>> Resolve(string domain, ushort type, dynamic s, CancellationToken t)
+        private async Task<List<string>> Resolve(string domain, ushort type, dynamic s, CancellationToken t, List<string> errorList)
         {
             var res = new List<string>();
+            string typeStr = (type == 1) ? "IPv4" : "IPv6";
+            
             try
             {
-                var req = new HttpRequestMessage(HttpMethod.Post, $"https://{s.server}:{s.port}/dns-query");
-                req.Content = new ByteArrayContent(BuildQuery(domain, type));
-                req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
-                
-                var resp = await _httpClient.SendAsync(req, t);
-                if (resp.IsSuccessStatusCode) 
+                using (var req = new HttpRequestMessage(HttpMethod.Post, $"https://{s.server}:{s.port}/dns-query"))
                 {
-                    byte[] data = await resp.Content.ReadAsByteArrayAsync();
-                    res.AddRange(ParseResponse(data, type));
+                    req.Content = new ByteArrayContent(BuildQuery(domain, type));
+                    req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
+                    
+                    // Тайм-аут 7 секунд на запрос
+                    using (var cts = CancellationTokenSource.CreateLinkedTokenSource(t))
+                    {
+                        cts.CancelAfter(TimeSpan.FromSeconds(7));
+                        var resp = await _httpClient.SendAsync(req, cts.Token);
+                        
+                        if (resp.IsSuccessStatusCode) 
+                        {
+                            byte[] data = await resp.Content.ReadAsByteArrayAsync();
+                            var parsed = ParseResponse(data, type);
+                            if (parsed.Count == 0) errorList.Add($"{typeStr}: Server returned 0 records");
+                            res.AddRange(parsed);
+                        }
+                        else
+                        {
+                            errorList.Add($"{typeStr}: HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase})");
+                        }
+                    }
                 }
-            } catch { }
+            }
+            catch (TaskCanceledException) { errorList.Add($"{typeStr}: Timeout (Check Server/Port)"); }
+            catch (HttpRequestException ex) { errorList.Add($"{typeStr}: Network error ({ex.InnerException?.Message ?? ex.Message})"); }
+            catch (Exception ex) { errorList.Add($"{typeStr}: Error: {ex.Message}"); }
+            
             return res;
         }
 
         private byte[] BuildQuery(string d, ushort t)
         {
             var ms = new MemoryStream();
-            // Header: ID(2), Flags(2), QD(2), AN(2), NS(2), AR(2)
             ms.Write(new byte[] { (byte)_rnd.Next(256), (byte)_rnd.Next(256), 1, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, 0, 12);
-            // Question: Name, Type(2), Class(2)
             foreach (var p in d.Split('.')) 
             { 
                 ms.WriteByte((byte)p.Length); 
@@ -172,31 +196,29 @@ namespace DNStoHOSTS
             var ips = new List<string>();
             try 
             {
-                int off = 12; // Skip header
+                int off = 12;
                 int qdc = (r[4] << 8) | r[5]; 
                 int anc = (r[6] << 8) | r[7];
 
-                // Skip Question Section
                 for (int i = 0; i < qdc; i++) 
                 {
                     SkipDnsName(r, ref off);
-                    off += 4; // Type + Class
+                    off += 4; 
                 }
 
-                // Parse Answer Section
                 for (int i = 0; i < anc; i++) 
                 {
                     SkipDnsName(r, ref off);
                     ushort type = (ushort)((r[off] << 8) | r[off + 1]); 
-                    off += 8; // Type(2), Class(2), TTL(4)
+                    off += 8; 
                     ushort len = (ushort)((r[off] << 8) | r[off + 1]); 
                     off += 2;
 
                     if (type == requestedType) 
                     {
-                        if (type == 1 && len == 4) // IPv4
+                        if (type == 1 && len == 4)
                             ips.Add($"{r[off]}.{r[off+1]}.{r[off+2]}.{r[off+3]}");
-                        else if (type == 28 && len == 16) // IPv6
+                        else if (type == 28 && len == 16)
                         { 
                             byte[] b = new byte[16]; 
                             Array.Copy(r, off, b, 0, 16); 
@@ -215,7 +237,7 @@ namespace DNStoHOSTS
             {
                 byte len = r[off];
                 if (len == 0) { off++; break; }
-                if ((len & 0xc0) == 0xc0) { off += 2; break; } // Handle pointers
+                if ((len & 0xc0) == 0xc0) { off += 2; break; } 
                 off += len + 1;
             }
         }
