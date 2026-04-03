@@ -107,11 +107,23 @@ namespace DNStoHOSTS
                 string domain = line.Trim();
                 Log("Resolving: " + domain);
                 var ips = new List<string>();
+                
                 if (settings.ipv4) ips.AddRange(await Resolve(domain, 1, settings, token));
                 if (settings.ipv6) ips.AddRange(await Resolve(domain, 28, settings, token));
 
-                if (!ips.Any()) output.Add("# No records: " + domain);
-                else foreach (var ip in ips.Distinct()) { Log("  -> " + ip); output.Add($"{ip} {domain}"); }
+                if (!ips.Any())
+                {
+                    Log("  [!] No records found for " + domain);
+                    output.Add("# No records: " + domain);
+                }
+                else 
+                {
+                    foreach (var ip in ips.Distinct()) 
+                    { 
+                        Log("  -> " + ip); 
+                        output.Add($"{ip} {domain}"); 
+                    }
+                }
 
                 count++;
                 Dispatcher.Invoke(() => MainProgress.Value = count);
@@ -128,8 +140,13 @@ namespace DNStoHOSTS
                 var req = new HttpRequestMessage(HttpMethod.Post, $"https://{s.server}:{s.port}/dns-query");
                 req.Content = new ByteArrayContent(BuildQuery(domain, type));
                 req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
+                
                 var resp = await _httpClient.SendAsync(req, t);
-                if (resp.IsSuccessStatusCode) res.AddRange(ParseResponse(await resp.Content.ReadAsByteArrayAsync(), type));
+                if (resp.IsSuccessStatusCode) 
+                {
+                    byte[] data = await resp.Content.ReadAsByteArrayAsync();
+                    res.AddRange(ParseResponse(data, type));
+                }
             } catch { }
             return res;
         }
@@ -137,31 +154,70 @@ namespace DNStoHOSTS
         private byte[] BuildQuery(string d, ushort t)
         {
             var ms = new MemoryStream();
+            // Header: ID(2), Flags(2), QD(2), AN(2), NS(2), AR(2)
             ms.Write(new byte[] { (byte)_rnd.Next(256), (byte)_rnd.Next(256), 1, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, 0, 12);
-            foreach (var p in d.Split('.')) { ms.WriteByte((byte)p.Length); var b = Encoding.ASCII.GetBytes(p); ms.Write(b, 0, b.Length); }
+            // Question: Name, Type(2), Class(2)
+            foreach (var p in d.Split('.')) 
+            { 
+                ms.WriteByte((byte)p.Length); 
+                var b = Encoding.ASCII.GetBytes(p); 
+                ms.Write(b, 0, b.Length); 
+            }
             ms.Write(new byte[] { 0, (byte)(t >> 8), (byte)(t & 0xff), 0, 1 }, 0, 5);
             return ms.ToArray();
         }
 
-        private List<string> ParseResponse(byte[] r, ushort t)
+        private List<string> ParseResponse(byte[] r, ushort requestedType)
         {
             var ips = new List<string>();
-            try {
-                int off = 12;
-                int qdc = (r[4] << 8) | r[5]; int anc = (r[6] << 8) | r[7];
-                for (int i = 0; i < qdc; i++) { while (r[off] != 0) { if ((r[off] & 0xc0) == 0xc0) { off += 2; goto nextq; } off += r[off] + 1; } off += 5; nextq:; }
-                for (int i = 0; i < anc; i++) {
-                    while (r[off] != 0) { if ((r[off] & 0xc0) == 0xc0) { off += 2; break; } off += r[off] + 1; } if (r[off] == 0) off++;
-                    ushort type = (ushort)((r[off] << 8) | r[off + 1]); off += 8;
-                    ushort len = (ushort)((r[off] << 8) | r[off + 1]); off += 2;
-                    if (type == t) {
-                        if (t == 1 && len == 4) ips.Add($"{r[off]}.{r[off+1]}.{r[off+2]}.{r[off+3]}");
-                        else if (t == 28 && len == 16) { byte[] b = new byte[16]; Array.Copy(r, off, b, 0, 16); ips.Add(new System.Net.IPAddress(b).ToString()); }
+            try 
+            {
+                int off = 12; // Skip header
+                int qdc = (r[4] << 8) | r[5]; 
+                int anc = (r[6] << 8) | r[7];
+
+                // Skip Question Section
+                for (int i = 0; i < qdc; i++) 
+                {
+                    SkipDnsName(r, ref off);
+                    off += 4; // Type + Class
+                }
+
+                // Parse Answer Section
+                for (int i = 0; i < anc; i++) 
+                {
+                    SkipDnsName(r, ref off);
+                    ushort type = (ushort)((r[off] << 8) | r[off + 1]); 
+                    off += 8; // Type(2), Class(2), TTL(4)
+                    ushort len = (ushort)((r[off] << 8) | r[off + 1]); 
+                    off += 2;
+
+                    if (type == requestedType) 
+                    {
+                        if (type == 1 && len == 4) // IPv4
+                            ips.Add($"{r[off]}.{r[off+1]}.{r[off+2]}.{r[off+3]}");
+                        else if (type == 28 && len == 16) // IPv6
+                        { 
+                            byte[] b = new byte[16]; 
+                            Array.Copy(r, off, b, 0, 16); 
+                            ips.Add(new System.Net.IPAddress(b).ToString()); 
+                        }
                     }
                     off += len;
                 }
             } catch { }
             return ips;
+        }
+
+        private void SkipDnsName(byte[] r, ref int off)
+        {
+            while (off < r.Length)
+            {
+                byte len = r[off];
+                if (len == 0) { off++; break; }
+                if ((len & 0xc0) == 0xc0) { off += 2; break; } // Handle pointers
+                off += len + 1;
+            }
         }
 
         private dynamic ReadSettings()
