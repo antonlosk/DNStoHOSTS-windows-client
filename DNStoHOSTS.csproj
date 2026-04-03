@@ -35,6 +35,11 @@
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
   </ItemGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="DnsClient" Version="1.8.0" />
+  </ItemGroup>
+
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
       <Generator>MSBuild:Compile</Generator>
