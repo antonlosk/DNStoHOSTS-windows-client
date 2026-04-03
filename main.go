@@ -12,9 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"gioui.org/app"
@@ -72,7 +72,9 @@ type Config struct {
 }
 
 func main() {
-	ensureFilesExist()
+	if err := ensureFilesExist(); err != nil {
+		fmt.Fprintf(os.Stderr, "Initialization error: %v\n", err)
+	}
 
 	go func() {
 		w := new(app.Window)
@@ -82,7 +84,7 @@ func main() {
 		)
 		
 		if err := drawWindow(w); err != nil {
-			fmt.Println("Critical Error:", err)
+			fmt.Println("Critical Window Error:", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -90,16 +92,21 @@ func main() {
 	app.Main()
 }
 
-func ensureFilesExist() {
+func ensureFilesExist() error {
 	if _, err := os.Stat("input.txt"); os.IsNotExist(err) {
 		content := "# Google\ngoogle.com\n"
-		os.WriteFile("input.txt", []byte(content), 0644)
+		if err := os.WriteFile("input.txt", []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to create input.txt: %w", err)
+		}
 	}
 
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
 		content := "server=dns.google\nport=443\nipv4=true\nipv6=false\n"
-		os.WriteFile("settings.txt", []byte(content), 0644)
+		if err := os.WriteFile("settings.txt", []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to create settings.txt: %w", err)
+		}
 	}
+	return nil
 }
 
 func drawWindow(w *app.Window) error {
@@ -138,6 +145,7 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 	cancelFunc := ui.CancelFunc
 	ui.StateMutex.Unlock()
 
+	// Logic: Start is clickable only when IDLE or DONE
 	if ui.BtnStart.Clicked(gtx) && currentState != StateResolving {
 		ui.StateMutex.Lock()
 		ui.State = StateResolving
@@ -150,14 +158,15 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 		go ui.startResolving(ctx)
 	}
 
+	// Logic: Stop is clickable only during work
 	if ui.BtnStop.Clicked(gtx) && currentState == StateResolving {
 		if cancelFunc != nil {
 			cancelFunc()
-			// Status transition is handled in startResolving's loop
 		}
 	}
 
-	if ui.BtnClear.Clicked(gtx) {
+	// Logic: Clear is clickable only when NOT resolving
+	if ui.BtnClear.Clicked(gtx) && currentState != StateResolving {
 		ui.LogMutex.Lock()
 		ui.Logs = []string{}
 		ui.LogMutex.Unlock()
@@ -169,9 +178,15 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 		ui.StateMutex.Unlock()
 	}
 
-	if ui.BtnInput.Clicked(gtx) { openFile("input.txt") }
-	if ui.BtnSettings.Clicked(gtx) { openFile("settings.txt") }
-	if ui.BtnOutput.Clicked(gtx) { openFile("output.txt") }
+	if ui.BtnInput.Clicked(gtx) { 
+		openFile("input.txt")
+	}
+	if ui.BtnSettings.Clicked(gtx) { 
+		openFile("settings.txt")
+	}
+	if ui.BtnOutput.Clicked(gtx) { 
+		openFile("output.txt")
+	}
 }
 
 func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
@@ -190,8 +205,11 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	paint.Fill(gtx.Ops, ui.Theme.Bg)
 
 	ui.LogMutex.Lock()
-	if ui.NewLogAdded && !ui.LogList.Position.BeforeEnd {
-		ui.LogList.Position.First = len(ui.Logs)
+	// Intelligent autoscroll: only if user is near the bottom (within 5 lines)
+	isNearBottom := ui.LogList.Position.First >= len(ui.Logs)-5
+	if ui.NewLogAdded && isNearBottom && len(ui.Logs) > 0 {
+		ui.LogList.Position.First = len(ui.Logs) - 1
+		ui.LogList.Position.Offset = 0
 	}
 	ui.NewLogAdded = false
 	logsCopy := append([]string(nil), ui.Logs...)
@@ -204,21 +222,22 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								btn := material.Button(ui.Theme, &ui.BtnStart, "Start")
-								if currentState == StateResolving {
-									btn.Background = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-								} else {
-									btn.Background = color.NRGBA{R: 0, G: 150, B: 0, A: 255}
-								}
-								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
+								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									// Start button: disabled if resolving
+									return ui.drawStateButton(gtx, &ui.BtnStart, "Start", color.NRGBA{R: 0, G: 150, B: 0, A: 255}, currentState != StateResolving)
+								})
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								btn := material.Button(ui.Theme, &ui.BtnStop, "Stop")
-								btn.Background = color.NRGBA{R: 200, G: 50, B: 50, A: 255}
-								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
+								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									// Stop button: disabled if NOT resolving
+									return ui.drawStateButton(gtx, &ui.BtnStop, "Stop", color.NRGBA{R: 200, G: 50, B: 50, A: 255}, currentState == StateResolving)
+								})
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Button(ui.Theme, &ui.BtnClear, "Clear").Layout)
+								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									// Clear button: disabled if resolving
+									return ui.drawStateButton(gtx, &ui.BtnClear, "Clear", ui.Theme.Palette.ContrastBg, currentState != StateResolving)
+								})
 							}),
 						)
 					}),
@@ -285,6 +304,17 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	)
 }
 
+// drawStateButton renders a button with an explicit visual disabled state
+func (ui *UI) drawStateButton(gtx layout.Context, btn *widget.Clickable, label string, baseColor color.NRGBA, enabled bool) layout.Dimensions {
+	button := material.Button(ui.Theme, btn, label)
+	if !enabled {
+		button.Background = color.NRGBA{R: 120, G: 120, B: 120, A: 150}
+	} else {
+		button.Background = baseColor
+	}
+	return button.Layout(gtx)
+}
+
 func (ui *UI) drawProgressBar(gtx layout.Context, currentState AppState, current, total int) layout.Dimensions {
 	height := gtx.Dp(unit.Dp(10))
 	width := gtx.Constraints.Max.X
@@ -301,7 +331,7 @@ func (ui *UI) drawProgressBar(gtx layout.Context, currentState AppState, current
 		fgColor = color.NRGBA{R: 0, G: 180, B: 0, A: 255}
 		progressWidth = width
 	case StateCancelled:
-		fgColor = color.NRGBA{R: 255, G: 165, B: 0, A: 255} // Orange for Cancelled
+		fgColor = color.NRGBA{R: 255, G: 165, B: 0, A: 255}
 		if total > 0 {
 			progressWidth = int(float32(width) * (float32(current) / float32(total)))
 		}
@@ -334,11 +364,19 @@ func (ui *UI) addLog(msg string) {
 	ui.Window.Invalidate()
 }
 
-func openFile(fn string) {
-	path, _ := filepath.Abs(fn)
-	cmd := exec.Command("cmd", "/c", "start", "", path)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	_ = cmd.Start()
+func openFile(fn string) error {
+	path, err := filepath.Abs(fn)
+	if err != nil { return err }
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
 }
 
 func (ui *UI) startResolving(ctx context.Context) {
@@ -347,6 +385,7 @@ func (ui *UI) startResolving(ctx context.Context) {
 	
 	lines, err := readLines("input.txt")
 	if err != nil {
+		ui.addLog("Error reading input.txt: " + err.Error())
 		ui.finish(StateIdle)
 		return
 	}
@@ -387,24 +426,39 @@ func (ui *UI) startResolving(ctx context.Context) {
 		}
 
 		ui.addLog("Resolving: " + trimmed)
-		var found []string
-		if cfg.IPv4 { found = append(found, resolveBinaryDoH(ctx, httpClient, dohURL, trimmed, dns.TypeA)...) }
-		if cfg.IPv6 { found = append(found, resolveBinaryDoH(ctx, httpClient, dohURL, trimmed, dns.TypeAAAA)...) }
+		
+		var foundIps []string
+		
+		handleResolve := func(qtype uint16, typeName string) {
+			ips, err := resolveBinaryDoH(ctx, httpClient, dohURL, trimmed, qtype)
+			if err != nil {
+				ui.addLog(fmt.Sprintf("   [%s] Failed after retries: %v", typeName, err))
+			} else if len(ips) > 0 {
+				foundIps = append(foundIps, ips...)
+				for _, ip := range ips {
+					ui.addLog(fmt.Sprintf("   [%s] Found: %s", typeName, ip))
+				}
+			}
+		}
 
-		if len(found) == 0 {
-			ui.addLog("   Not found: " + trimmed)
+		if cfg.IPv4 { handleResolve(dns.TypeA, "A") }
+		if cfg.IPv6 { handleResolve(dns.TypeAAAA, "AAAA") }
+
+		if len(foundIps) == 0 {
 			output = append(output, "# Not found: "+trimmed)
 		} else {
-			for _, ip := range found {
-				ui.addLog("   Found: " + ip)
+			for _, ip := range foundIps {
 				output = append(output, fmt.Sprintf("%s %s", ip, trimmed))
 			}
 		}
 		ui.incrementProgress()
 	}
 
-	writeLines("output.txt", output)
-	ui.addLog("Results saved to output.txt")
+	if err := writeLines("output.txt", output); err != nil {
+		ui.addLog("Error saving output.txt: " + err.Error())
+	} else {
+		ui.addLog("Results successfully saved to output.txt")
+	}
 	ui.finish(StateDone)
 }
 
@@ -423,34 +477,82 @@ func (ui *UI) finish(s AppState) {
 	ui.Window.Invalidate() 
 }
 
-func resolveBinaryDoH(ctx context.Context, client *http.Client, url, domain string, qtype uint16) []string {
+func resolveBinaryDoH(ctx context.Context, client *http.Client, url, domain string, qtype uint16) ([]string, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), qtype)
 	m.RecursionDesired = true
 	buf, err := m.Pack()
-	if err != nil { return nil }
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(buf))
-	if err != nil { return nil }
-	req.Header.Set("Content-Type", "application/dns-message")
-	req.Header.Set("Accept", "application/dns-message")
-
-	resp, err := client.Do(req)
-	if err != nil { return nil }
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK { return nil }
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil { return nil }
-	respMsg := new(dns.Msg)
-	if err := respMsg.Unpack(body); err != nil { return nil }
-
-	var ips []string
-	for _, a := range respMsg.Answer {
-		if t, ok := a.(*dns.A); ok && qtype == dns.TypeA { ips = append(ips, t.A.String()) }
-		if t, ok := a.(*dns.AAAA); ok && qtype == dns.TypeAAAA { ips = append(ips, t.AAAA.String()) }
+	if err != nil { 
+		return nil, fmt.Errorf("failed to pack DNS query: %w", err) 
 	}
-	return ips
+
+	const maxRetries = 3
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(buf))
+		if err != nil { 
+			return nil, fmt.Errorf("failed to create HTTP request: %w", err) 
+		}
+		req.Header.Set("Content-Type", "application/dns-message")
+		req.Header.Set("Accept", "application/dns-message")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			if attempt < maxRetries {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			break
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("server returned HTTP %d (%s)", resp.StatusCode, string(body))
+			// Retry only on server side errors or rate limit
+			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			return nil, lastErr
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil { 
+			lastErr = fmt.Errorf("failed to read response body: %w", err)
+			continue
+		}
+
+		respMsg := new(dns.Msg)
+		if err := respMsg.Unpack(body); err != nil { 
+			lastErr = fmt.Errorf("failed to unpack DNS response: %w", err)
+			continue
+		}
+
+		if respMsg.Rcode != dns.RcodeSuccess {
+			return nil, fmt.Errorf("DNS error: %s", dns.RcodeToString[respMsg.Rcode])
+		}
+
+		var ips []string
+		for _, a := range respMsg.Answer {
+			if t, ok := a.(*dns.A); ok && qtype == dns.TypeA { 
+				ips = append(ips, t.A.String()) 
+			}
+			if t, ok := a.(*dns.AAAA); ok && qtype == dns.TypeAAAA { 
+				ips = append(ips, t.AAAA.String()) 
+			}
+		}
+		return ips, nil
+	}
+
+	return nil, fmt.Errorf("all %d attempts failed: %v", maxRetries, lastErr)
 }
 
 func loadSettings() Config {
@@ -483,7 +585,13 @@ func readLines(p string) ([]string, error) {
 	return l, s.Err()
 }
 
-func writeLines(p string, l []string) {
-	f, _ := os.Create(p); defer f.Close()
-	for _, line := range l { f.WriteString(line + "\n") }
+func writeLines(p string, l []string) error {
+	f, err := os.Create(p)
+	if err != nil { return err }
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	for _, line := range l {
+		if _, err := w.WriteString(line + "\n"); err != nil { return err }
+	}
+	return w.Flush()
 }
