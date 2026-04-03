@@ -3,13 +3,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
-using DnsClient; // Не забудь добавить NuGet пакет DnsClient
+using DnsClient; // Библиотека для работы с DNS
 
 namespace DNStoHOSTS
 {
@@ -21,8 +21,6 @@ namespace DNStoHOSTS
 
         private bool _isDarkTheme = true;
         private CancellationTokenSource _cts;
-        
-        // Используем встроенный в DnsClient обработчик для DoH или системный HttpClient
         private static readonly HttpClient _httpClient = new HttpClient();
 
         public MainWindow()
@@ -86,8 +84,8 @@ namespace DNStoHOSTS
                 await Task.Run(() => ProcessDomains(_cts.Token)); 
                 MainProgress.Foreground = (SolidColorBrush)FindResource("ProgressGreen"); 
             }
-            catch (OperationCanceledException) { Log("Stopped by user."); }
-            catch (Exception ex) { Log("Critical Error: " + ex.Message); }
+            catch (OperationCanceledException) { Log("Stopped."); }
+            catch (Exception ex) { Log("Error: " + ex.Message); }
             finally { _cts.Dispose(); _cts = null; }
         }
 
@@ -95,12 +93,6 @@ namespace DNStoHOSTS
         {
             Log("Starting...");
             var settings = ReadSettings();
-            
-            // Настраиваем DnsClient для работы через HTTPS (DoH)
-            // Формируем URL: https://server:port/dns-query
-            var dohUrl = $"https://{settings.server}:{settings.port}/dns-query";
-            var lookup = new LookupClient(new LookupClientOptions { UseCache = false });
-
             if (!File.Exists(InputFile)) return;
 
             var lines = File.ReadAllLines(InputFile);
@@ -119,28 +111,25 @@ namespace DNStoHOSTS
                 Log("Resolving: " + domain);
                 
                 var ips = new List<string>();
+                var errors = new List<string>();
                 
-                try 
-                {
-                    // Делаем запрос через наш кастомный резолвер (DoH)
-                    if (settings.ipv4) ips.AddRange(await ResolveWithLibrary(dohUrl, domain, QueryType.A, token));
-                    if (settings.ipv6) ips.AddRange(await ResolveWithLibrary(dohUrl, domain, QueryType.AAAA, token));
+                // Используем библиотеку для каждого типа запроса
+                if (settings.ipv4) ips.AddRange(await ResolveWithLib(domain, QueryType.A, settings, token, errors));
+                if (settings.ipv6) ips.AddRange(await ResolveWithLib(domain, QueryType.AAAA, settings, token, errors));
 
-                    if (!ips.Any())
-                    {
-                        Log("  [!] No records for " + domain);
-                        output.Add("# No records: " + domain);
-                    }
-                    else 
-                    {
-                        foreach (var ip in ips.Distinct()) 
-                        { 
-                            Log("  -> " + ip); 
-                            output.Add($"{ip} {domain}"); 
-                        }
+                if (!ips.Any())
+                {
+                    foreach(var err in errors.Distinct()) Log($"  [!] {err}");
+                    output.Add("# No records: " + domain);
+                }
+                else 
+                {
+                    foreach (var ip in ips.Distinct()) 
+                    { 
+                        Log("  -> " + ip); 
+                        output.Add($"{ip} {domain}"); 
                     }
                 }
-                catch (Exception ex) { Log($"  [!] Error: {ex.Message}"); }
 
                 count++;
                 Dispatcher.Invoke(() => MainProgress.Value = count);
@@ -149,37 +138,41 @@ namespace DNStoHOSTS
             Log("Done. Saved to " + OutputFile);
         }
 
-        // Вспомогательный метод для DoH запроса через библиотеку
-        private async Task<List<string>> ResolveWithLibrary(string url, string domain, QueryType type, CancellationToken t)
+        private async Task<List<string>> ResolveWithLib(string domain, QueryType type, dynamic s, CancellationToken t, List<string> errs)
         {
             var results = new List<string>();
             try
             {
-                // Формируем запрос вручную, так как DnsClient больше заточен под UDP/TCP, 
-                // но мы используем его для парсинга ответа
-                var message = new DnsMessageHandler();
+                // Используем DnsClient для создания бинарного запроса
+                var msgHandler = new DnsMessageHandler();
                 var query = new DnsQuestion(domain, type);
-                var requestData = message.GetRequestData(new DnsRequestMessage(new DnsRequestHeader(Guid.NewGuid().GetHashCode(), true, DnsOpCode.Query), query));
+                var header = new DnsRequestHeader(Guid.NewGuid().GetHashCode(), true, DnsOpCode.Query);
+                var requestData = msgHandler.GetRequestData(new DnsRequestMessage(header, query));
 
-                // Кодируем для DoH GET (Base64Url)
-                string base64Query = Convert.ToBase64String(requestData.ToArray())
-                    .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+                // Кодируем в Base64Url
+                string base64 = Convert.ToBase64String(requestData.ToArray()).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+                string url = $"https://{s.server}:{s.port}/dns-query?dns={base64}";
 
-                var resp = await _httpClient.GetAsync($"{url}?dns={base64Query}", t);
-                if (resp.IsSuccessStatusCode)
+                using (var req = new HttpRequestMessage(HttpMethod.Get, url))
                 {
-                    var responseData = await resp.Content.ReadAsByteArrayAsync();
-                    var responseMessage = message.GetResponseMessage(responseData);
-                    
-                    foreach (var record in responseMessage.Answers)
+                    req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
+                    req.Headers.UserAgent.ParseAdd("DNStoHOSTS/1.2");
+
+                    var resp = await _httpClient.SendAsync(req, t);
+                    if (resp.IsSuccessStatusCode)
                     {
-                        if (record is DnsClient.Protocol.AddressRecord addr)
-                            results.Add(addr.Address.ToString());
+                        var data = await resp.Content.ReadAsByteArrayAsync();
+                        var responseMessage = msgHandler.GetResponseMessage(data);
+                        foreach (var answer in responseMessage.Answers)
+                        {
+                            if (answer is DnsClient.Protocol.AddressRecord addr)
+                                results.Add(addr.Address.ToString());
+                        }
                     }
+                    else errs.Add($"HTTP {(int)resp.StatusCode}");
                 }
-                else { Log($"  [!] HTTP Error: {(int)resp.StatusCode}"); }
             }
-            catch (Exception ex) { Log($"  [!] Library Error: {ex.Message}"); }
+            catch (Exception ex) { errs.Add(ex.Message); }
             return results;
         }
 
