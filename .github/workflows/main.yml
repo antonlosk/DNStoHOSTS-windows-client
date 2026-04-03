@@ -1,17 +1,17 @@
-name: Build Windows Client
+name: Build and Release DNStoHOSTS
 
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой в GitHub
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v2
@@ -19,15 +19,39 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # КРИТИЧЕСКИЙ ШАГ: Скачивание библиотек
+    # Восстановление библиотек (даже если мы их убрали, шаг полезен для кэша)
     - name: Restore NuGet Packages
       run: nuget restore DNStoHOSTS.csproj
 
-    - name: Build App
-      run: msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform="AnyCPU"
+    # Сборка проекта (AnyCPU без пробела!)
+    - name: Build Application
+      run: msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform=AnyCPU
 
+    # Собираем все нужные файлы в одну папку для удобства
+    - name: Prepare Artifacts
+      run: |
+        mkdir publish
+        copy bin\Release\DNStoHOSTS.exe publish\
+        echo "server=dns.google" > publish\settings.txt
+        echo "port=443" >> publish\settings.txt
+        echo "ipv4=true" >> publish\settings.txt
+        echo "ipv6=false" >> publish\settings.txt
+        echo "# Add domains here" > publish\input.txt
+
+    # Загрузка артефакта в GitHub Actions (доступен 90 дней)
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: DNStoHOSTS-Binary
-        path: bin/Release/
+        name: DNStoHOSTS-Windows-v1.2
+        path: publish/
+
+    # Автоматическое создание релиза (опционально)
+    - name: Create GitHub Release
+      if: github.event_name == 'push' && contains(github.ref, 'main')
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v1.2.${{ github.run_number }}
+        name: Release v1.2.${{ github.run_number }}
+        files: publish/DNStoHOSTS.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
