@@ -1,17 +1,14 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Media;
-using DnsClient;
-using DnsClient.Protocol;
 
 namespace DNStoHOSTS
 {
@@ -20,24 +17,15 @@ namespace DNStoHOSTS
         private const string InputFile = "input.txt";
         private const string SettingsFile = "settings.txt";
         private const string OutputFile = "output.txt";
-        private bool _isDarkTheme = true;
         private CancellationTokenSource _cts;
-
-        private static readonly HttpClient _httpClient = new HttpClient(new HttpClientHandler() { UseProxy = false });
+        private static readonly HttpClient _client = new HttpClient(new HttpClientHandler { UseProxy = false });
 
         public MainWindow()
         {
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | (SecurityProtocolType)12288;
             InitializeComponent();
-            CheckAndCreateDefaultFiles();
-        }
-
-        private void CheckAndCreateDefaultFiles()
-        {
-            try {
-                if (!File.Exists(InputFile)) File.WriteAllText(InputFile, "google.com\r\n");
-                if (!File.Exists(SettingsFile)) File.WriteAllText(SettingsFile, "server=dns.google\r\nport=443\r\nipv4=true\r\nipv6=false\r\n");
-            } catch { }
+            if (!File.Exists(InputFile)) File.WriteAllText(InputFile, "google.com\n");
+            if (!File.Exists(SettingsFile)) File.WriteAllText(SettingsFile, "server=dns.google\nport=443\nipv4=true\nipv6=false\n");
         }
 
         private void Log(string m) => Dispatcher.Invoke(() => { LogTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {m}\r\n"); LogTextBox.ScrollToEnd(); });
@@ -46,89 +34,89 @@ namespace DNStoHOSTS
         {
             if (_cts != null) return;
             _cts = new CancellationTokenSource();
-            try { await Task.Run(() => ProcessDomains(_cts.Token)); }
+            try { await Task.Run(() => MainWork(_cts.Token)); }
             catch (Exception ex) { Log("Error: " + ex.Message); }
             finally { _cts.Dispose(); _cts = null; }
         }
 
-        private async Task ProcessDomains(CancellationToken token)
+        private async Task MainWork(CancellationToken ct)
         {
             Log("Starting...");
-            var s = ReadSettings();
-            if (!File.Exists(InputFile)) return;
+            var cfg = ParseCfg();
+            var lines = File.Exists(InputFile) ? File.ReadAllLines(InputFile) : new string[0];
+            var res = new List<string>();
 
-            var lines = File.ReadAllLines(InputFile);
-            var resultLines = new List<string>();
-            
             foreach (var line in lines)
             {
-                if (token.IsCancellationRequested) break;
-                string domain = line.Trim();
-                if (string.IsNullOrEmpty(domain) || domain.StartsWith("#")) { resultLines.Add(line); continue; }
+                if (ct.IsCancellationRequested) break;
+                string d = line.Trim();
+                if (string.IsNullOrEmpty(d) || d.StartsWith("#")) { res.Add(line); continue; }
 
-                Log($"Resolving: {domain}");
-                var foundIps = new List<string>();
+                Log("Resolving: " + d);
+                var ips = new List<string>();
+                if (cfg.v4) ips.AddRange(await GetIP(d, 1, cfg, ct));
+                if (cfg.v6) ips.AddRange(await GetIP(d, 28, cfg, ct));
 
-                if (s.ipv4) foundIps.AddRange(await Resolve(domain, QueryType.A, s, token));
-                if (s.ipv6) foundIps.AddRange(await Resolve(domain, QueryType.AAAA, s, token));
-
-                if (foundIps.Count > 0)
-                {
-                    foreach (var ip in foundIps.Distinct()) { Log($"  -> {ip}"); resultLines.Add($"{ip} {domain}"); }
-                }
-                else { Log("  [!] No records found"); resultLines.Add($"# Failed: {domain}"); }
+                if (ips.Any()) {
+                    foreach (var ip in ips.Distinct()) { Log(" -> " + ip); res.Add($"{ip} {d}"); }
+                } else { Log(" [!] Fail"); res.Add("# Fail: " + d); }
             }
-            File.WriteAllLines(OutputFile, resultLines);
+            File.WriteAllLines(OutputFile, res);
             Log("Done.");
         }
 
-        private async Task<List<string>> Resolve(string domain, QueryType type, dynamic s, CancellationToken t)
+        private async Task<List<string>> GetIP(string d, ushort t, dynamic c, CancellationToken ct)
         {
-            var ips = new List<string>();
-            try
-            {
-                // Используем библиотеку для создания сообщения (это решит проблему с HTTP 400)
-                var query = new DnsQuestion(domain, type);
-                var lookup = new LookupClient(IPAddress.Loopback); // Нам нужен только объект
-                var message = lookup.Query(query); // Создаем валидное сообщение
-                
-                // Сериализуем сообщение в байты через встроенные средства DnsClient
-                // Мы используем публичный метод записи в массив
-                var writer = new DnsDatagramWriter(new byte[512]);
-                // Так как прямого доступа к Write нет, мы просто получим данные через запрос
-                byte[] rawQuery = message.Answers.Context.QueryMessage.Data.ToArray(); 
-
-                // Если трюк с Context не сработает (зависит от версии), используем запасной бинарный вариант:
-                string host = ((string)s.server).Trim();
-                string url = $"https://{host}:{s.port}/dns-query";
-
-                using (var req = new HttpRequestMessage(HttpMethod.Post, url))
-                {
-                    // Самый надежный способ - передавать бинарный DNS пакет в POST
-                    req.Content = new ByteArrayContent(rawQuery);
-                    req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
-                    req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
-
-                    var resp = await _httpClient.SendAsync(req, t);
-                    if (resp.IsSuccessStatusCode)
-                    {
-                        var data = await resp.Content.ReadAsByteArrayAsync();
-                        // Парсим ответ обратно через библиотеку
-                        var response = new DnsResponseMessage(new ArraySegment<byte>(data), 0);
-                        foreach (var record in response.Answers)
-                        {
-                            if (record is AddressRecord addr) ips.Add(addr.Address.ToString());
-                        }
-                    }
-                    else { Log($"  HTTP Error: {(int)resp.StatusCode}"); }
+            var ret = new List<string>();
+            try {
+                var ms = new MemoryStream();
+                ms.Write(new byte[] { 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, 0, 12);
+                foreach (var p in d.Split('.')) {
+                    byte[] b = Encoding.ASCII.GetBytes(p);
+                    ms.WriteByte((byte)b.Length); ms.Write(b, 0, b.Length);
                 }
-            }
-            catch (Exception ex) { Log($"  Error: {ex.Message}"); }
-            return ips;
+                ms.Write(new byte[] { 0, 0, (byte)t, 0, 1 }, 0, 5);
+
+                var req = new HttpRequestMessage(HttpMethod.Post, $"https://{c.s}:{c.p}/dns-query");
+                req.Content = new ByteArrayContent(ms.ToArray());
+                req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
+                req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
+
+                var resp = await _client.SendAsync(req, ct);
+                if (resp.IsSuccessStatusCode) {
+                    byte[] r = await resp.Content.ReadAsByteArrayAsync();
+                    int pos = 12;
+                    int qd = (r[4] << 8) | r[5];
+                    int an = (r[6] << 8) | r[7];
+                    for (int i = 0; i < qd; i++) { Skip(r, ref pos); pos += 4; }
+                    for (int i = 0; i < an; i++) {
+                        Skip(r, ref pos);
+                        ushort type = (ushort)((r[pos] << 8) | r[pos + 1]); pos += 8;
+                        ushort len = (ushort)((r[pos] << 8) | r[pos + 1]); pos += 2;
+                        if (type == t) {
+                            if (t == 1 && len == 4) ret.Add($"{r[pos]}.{r[pos+1]}.{r[pos+2]}.{r[pos+3]}");
+                            if (t == 28 && len == 16) {
+                                byte[] ipb = new byte[16]; Array.Copy(r, pos, ipb, 0, 16);
+                                ret.Add(new IPAddress(ipb).ToString());
+                            }
+                        }
+                        pos += len;
+                    }
+                }
+            } catch { }
+            return ret;
         }
 
-        private dynamic ReadSettings()
-        {
+        private void Skip(byte[] r, ref int p) {
+            while (p < r.Length) {
+                int b = r[p];
+                if (b == 0) { p++; break; }
+                if ((b & 0xc0) == 0xc0) { p += 2; break; }
+                p += b + 1;
+            }
+        }
+
+        private dynamic ParseCfg() {
             string s = "dns.google"; int p = 443; bool v4 = true, v6 = false;
             if (File.Exists(SettingsFile))
                 foreach (var l in File.ReadAllLines(SettingsFile)) {
@@ -137,13 +125,12 @@ namespace DNStoHOSTS
                     if (k == "server") s = v; else if (k == "port") int.TryParse(v, out p);
                     else if (k == "ipv4") v4 = v == "true"; else if (k == "ipv6") v6 = v == "true";
                 }
-            return new { server = s, port = p, ipv4 = v4, ipv6 = v6 };
+            return new { s, p, v4, v6 };
         }
-        
-        // Заглушки для UI событий
-        private void BtnStop_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();
-        private void BtnClear_Click(object sender, RoutedEventArgs e) => LogTextBox.Clear();
-        private void BtnTheme_Click(object sender, RoutedEventArgs e) { /* ... */ }
-        private void BtnFile_Click(object sender, RoutedEventArgs e) { /* ... */ }
+
+        private void BtnStop_Click(object sender, System.Windows.RoutedEventArgs e) => _cts?.Cancel();
+        private void BtnClear_Click(object sender, System.Windows.RoutedEventArgs e) => LogTextBox.Clear();
+        private void BtnTheme_Click(object sender, System.Windows.RoutedEventArgs e) { }
+        private void BtnFile_Click(object sender, System.Windows.RoutedEventArgs e) { }
     }
 }
