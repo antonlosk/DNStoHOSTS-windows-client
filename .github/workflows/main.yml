@@ -24,7 +24,7 @@ jobs:
       run: nuget restore DNStoHOSTS.csproj
 
     - name: Build App
-      run: msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform="Any CPU"
+      run: msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform="AnyCPU"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
