@@ -37,33 +37,33 @@ const (
 	StateDone
 	StateCancelled
 
-	maxLogs = 3000 
+	maxLogs = 3000
 )
 
 type UI struct {
-	Theme        *material.Theme
-	IsDarkMode   bool
-	ThemeToggle  widget.Bool
+	Theme       *material.Theme
+	IsDarkMode  bool
+	ThemeToggle widget.Bool
 
-	BtnStart     widget.Clickable
-	BtnStop      widget.Clickable
-	BtnClear     widget.Clickable
-	BtnInput     widget.Clickable
-	BtnSettings  widget.Clickable
-	BtnOutput    widget.Clickable
+	BtnStart    widget.Clickable
+	BtnStop     widget.Clickable
+	BtnClear    widget.Clickable
+	BtnInput    widget.Clickable
+	BtnSettings widget.Clickable
+	BtnOutput   widget.Clickable
 
-	LogList      widget.List
-	Logs         []string
-	LogMutex     sync.Mutex
-	AutoScroll   bool 
+	LogList    widget.List
+	Logs       []string
+	LogMutex   sync.Mutex
+	AutoScroll bool
 
-	StateMutex   sync.Mutex
-	State        AppState
-	CancelFunc   context.CancelFunc
-	TotalLines   int
-	CurrentLine  int
+	StateMutex  sync.Mutex
+	State       AppState
+	CancelFunc  context.CancelFunc
+	TotalLines  int
+	CurrentLine int
 
-	Window       *app.Window
+	Window *app.Window
 }
 
 type Config struct {
@@ -82,7 +82,7 @@ func main() {
 			app.Title("DNStoHOSTS"),
 			app.Size(unit.Dp(800), unit.Dp(600)),
 		)
-		
+
 		if err := drawWindow(w); err != nil {
 			fmt.Fprintf(os.Stderr, "Critical Window Error: %v\n", err)
 			os.Exit(1)
@@ -149,7 +149,9 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 	}
 
 	if currentState == StateResolving && ui.BtnStop.Clicked(gtx) {
-		if cancelFunc != nil { cancelFunc() }
+		if cancelFunc != nil {
+			cancelFunc()
+		}
 	}
 
 	if currentState != StateResolving && ui.BtnClear.Clicked(gtx) {
@@ -157,16 +159,22 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 		ui.Logs = []string{}
 		ui.AutoScroll = true
 		ui.LogMutex.Unlock()
-		
+
 		ui.StateMutex.Lock()
 		ui.State = StateIdle
 		ui.TotalLines, ui.CurrentLine = 0, 0
 		ui.StateMutex.Unlock()
 	}
 
-	if ui.BtnInput.Clicked(gtx) { openFile("input.txt") }
-	if ui.BtnSettings.Clicked(gtx) { openFile("settings.txt") }
-	if ui.BtnOutput.Clicked(gtx) { openFile("output.txt") }
+	if ui.BtnInput.Clicked(gtx) {
+		openFile("input.txt")
+	}
+	if ui.BtnSettings.Clicked(gtx) {
+		openFile("settings.txt")
+	}
+	if ui.BtnOutput.Clicked(gtx) {
+		openFile("output.txt")
+	}
 }
 
 func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
@@ -183,11 +191,10 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	paint.Fill(gtx.Ops, ui.Theme.Bg)
 
 	ui.LogMutex.Lock()
-	// Update AutoScroll intent based on user interaction from the previous frame
+	// Logic for AutoScroll toggle based on user position
 	if !ui.LogList.Position.BeforeEnd {
 		ui.AutoScroll = true
 	} else {
-		// If user moved away from the bottom, disable sticking
 		ui.AutoScroll = false
 	}
 	ui.LogList.ScrollToEnd = ui.AutoScroll
@@ -195,7 +202,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	ui.LogMutex.Unlock()
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Header with Buttons
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
@@ -239,7 +245,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 
-		// Log Area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			logBg := color.NRGBA{R: 245, G: 245, B: 245, A: 255}
 			if ui.IsDarkMode { logBg = color.NRGBA{R: 30, G: 30, B: 30, A: 255} }
@@ -255,7 +260,6 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 
-		// Status Bar
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -335,7 +339,6 @@ func (ui *UI) updateTheme() {
 func (ui *UI) addLog(msg string) {
 	ui.LogMutex.Lock()
 	ui.Logs = append(ui.Logs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), msg))
-	
 	if len(ui.Logs) > maxLogs {
 		ui.Logs = ui.Logs[len(ui.Logs)-maxLogs:]
 		ui.Logs[0] = fmt.Sprintf("[%s] [SYSTEM] Older logs truncated", time.Now().Format("15:04:05"))
@@ -459,7 +462,6 @@ func resolveBinaryDoH(ctx context.Context, client *http.Client, url, domain stri
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 			if resp.StatusCode >= 500 || resp.StatusCode == 429 {
@@ -469,8 +471,10 @@ func resolveBinaryDoH(ctx context.Context, client *http.Client, url, domain stri
 			return nil, lastErr
 		}
 
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil { return nil, err }
+
 		respMsg := new(dns.Msg)
 		if err := respMsg.Unpack(body); err != nil { return nil, err }
 
@@ -513,8 +517,7 @@ func readLines(p string) ([]string, error) {
 }
 
 func writeLines(p string, l []string) {
-	f, _ := os.Create(p)
-	defer f.Close()
+	f, _ := os.Create(p); defer f.Close()
 	w := bufio.NewWriter(f)
 	for _, line := range l { w.WriteString(line + "\n") }
 	w.Flush()
