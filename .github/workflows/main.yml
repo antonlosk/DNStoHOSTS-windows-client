@@ -1,63 +1,33 @@
-name: Build and Release DNStoHOSTS
+name: Build Windows Client
 
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch:
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+    - uses: actions/checkout@v4
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
 
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    - name: Calculate Version
-      id: versioning
-      shell: pwsh
-      run: |
-        $latestTag = git tag --sort=-v:refname | Select-Object -First 1
-        if (!$latestTag) { $latestTag = "v0.0.0" }
-        $cleanTag = $latestTag.TrimStart('v')
-        $parts = $cleanTag.Split('.')
-        
-        [int]$major = $parts[0]
-        [int]$minor = $parts[1]
-        [int]$patch = $parts[2]
+    # КРИТИЧЕСКИЙ ШАГ: Скачивание библиотек
+    - name: Restore NuGet Packages
+      run: nuget restore DNStoHOSTS.csproj
 
-        # Твоя логика: 10 — это предел для перехода на уровень выше
-        if ($patch -lt 10) {
-            $patch++
-        } else {
-            $patch = 0
-            if ($minor -lt 10) {
-                $minor++
-            } else {
-                $minor = 0
-                $major++
-            }
-        }
+    - name: Build App
+      run: msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform="Any CPU"
 
-        $newVer = "$major.$minor.$patch"
-        echo "NEW_VERSION=$newVer" >> $env:GITHUB_ENV
-        Write-Host "New Version: v$newVer"
-
-    - name: Build EXE
-      run: |
-        msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=bin\Release\
-
-    - name: Rename and Release
-      uses: softprops/action-gh-release@v1
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
       with:
-        tag_name: v${{ env.NEW_VERSION }}
-        name: Release v${{ env.NEW_VERSION }}
-        files: |
-          bin/Release/DNStoHOSTS.exe
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        name: DNStoHOSTS-Binary
+        path: bin/Release/
