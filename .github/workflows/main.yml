@@ -16,16 +16,12 @@ jobs:
         fetch-depth: 0
 
     - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v1.3
+      uses: microsoft/setup-msbuild@v2
 
-    - name: Setup NuGet
-      uses: nuget/setup-nuget@v1
-
-    - name: Calculate Next Version
+    - name: Calculate Version
       id: versioning
       shell: pwsh
       run: |
-        # Get latest tag or default to v0.0.0
         $latestTag = git tag --sort=-v:refname | Select-Object -First 1
         if (!$latestTag) { $latestTag = "v0.0.0" }
         $cleanTag = $latestTag.TrimStart('v')
@@ -35,7 +31,7 @@ jobs:
         [int]$minor = $parts[1]
         [int]$patch = $parts[2]
 
-        # Custom versioning logic: 0.0.9 -> 0.0.10 -> 0.1.0, etc.
+        # Твоя логика: 10 — это предел для перехода на уровень выше
         if ($patch -lt 10) {
             $patch++
         } else {
@@ -48,34 +44,20 @@ jobs:
             }
         }
 
-        $newVersion = "$major.$minor.$patch"
-        echo "NEW_VERSION=$newVersion" >> $env:GITHUB_ENV
-        echo "Calculated version: v$newVersion"
+        $newVer = "$major.$minor.$patch"
+        echo "NEW_VERSION=$newVer" >> $env:GITHUB_ENV
+        Write-Host "New Version: v$newVer"
 
-    - name: Restore NuGet packages
-      run: nuget restore DNStoHOSTS.csproj
-
-    - name: Build Application
+    - name: Build EXE
       run: |
         msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=bin\Release\
 
-    - name: Prepare Artifact
-      shell: pwsh
-      run: |
-        $exePath = "bin\Release\DNStoHOSTS.exe"
-        $newName = "DNStoHOSTS_v${{ env.NEW_VERSION }}.exe"
-        if (Test-Path $exePath) {
-            Move-Item -Path $exePath -Destination "./$newName"
-        } else {
-            Write-Error "Executable not found at $exePath"
-            exit 1
-        }
-
-    - name: Create Release
+    - name: Rename and Release
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ env.NEW_VERSION }}
         name: Release v${{ env.NEW_VERSION }}
-        files: DNStoHOSTS_v${{ env.NEW_VERSION }}.exe
+        files: |
+          bin/Release/DNStoHOSTS.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
