@@ -36,6 +36,8 @@ const (
 	StateResolving
 	StateDone
 	StateCancelled
+
+	maxLogs = 3000 
 )
 
 type UI struct {
@@ -53,7 +55,7 @@ type UI struct {
 	LogList      widget.List
 	Logs         []string
 	LogMutex     sync.Mutex
-	NewLogAdded  bool
+	AutoScroll   bool 
 
 	StateMutex   sync.Mutex
 	State        AppState
@@ -72,9 +74,7 @@ type Config struct {
 }
 
 func main() {
-	if err := ensureFilesExist(); err != nil {
-		fmt.Fprintf(os.Stderr, "Initialization error: %v\n", err)
-	}
+	ensureFilesExist()
 
 	go func() {
 		w := new(app.Window)
@@ -84,7 +84,7 @@ func main() {
 		)
 		
 		if err := drawWindow(w); err != nil {
-			fmt.Println("Critical Window Error:", err)
+			fmt.Fprintf(os.Stderr, "Critical Window Error: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -92,21 +92,13 @@ func main() {
 	app.Main()
 }
 
-func ensureFilesExist() error {
+func ensureFilesExist() {
 	if _, err := os.Stat("input.txt"); os.IsNotExist(err) {
-		content := "# Google\ngoogle.com\n"
-		if err := os.WriteFile("input.txt", []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to create input.txt: %w", err)
-		}
+		os.WriteFile("input.txt", []byte("# List domains here\ngoogle.com\n"), 0644)
 	}
-
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
-		content := "server=dns.google\nport=443\nipv4=true\nipv6=false\n"
-		if err := os.WriteFile("settings.txt", []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to create settings.txt: %w", err)
-		}
+		os.WriteFile("settings.txt", []byte("server=dns.google\nport=443\nipv4=true\nipv6=false\n"), 0644)
 	}
-	return nil
 }
 
 func drawWindow(w *app.Window) error {
@@ -116,6 +108,7 @@ func drawWindow(w *app.Window) error {
 		IsDarkMode: true,
 		Window:     w,
 		State:      StateIdle,
+		AutoScroll: true,
 	}
 	ui.ThemeToggle.Value = true
 	ui.LogList.Axis = layout.Vertical
@@ -145,57 +138,42 @@ func (ui *UI) handleEvents(gtx layout.Context) {
 	cancelFunc := ui.CancelFunc
 	ui.StateMutex.Unlock()
 
-	// Logic: Start is clickable only when IDLE or DONE
-	if ui.BtnStart.Clicked(gtx) && currentState != StateResolving {
+	if currentState != StateResolving && ui.BtnStart.Clicked(gtx) {
 		ui.StateMutex.Lock()
 		ui.State = StateResolving
-		ui.TotalLines = 0
-		ui.CurrentLine = 0
+		ui.TotalLines, ui.CurrentLine = 0, 0
 		ctx, cancel := context.WithCancel(context.Background())
 		ui.CancelFunc = cancel
 		ui.StateMutex.Unlock()
-		
 		go ui.startResolving(ctx)
 	}
 
-	// Logic: Stop is clickable only during work
-	if ui.BtnStop.Clicked(gtx) && currentState == StateResolving {
-		if cancelFunc != nil {
-			cancelFunc()
-		}
+	if currentState == StateResolving && ui.BtnStop.Clicked(gtx) {
+		if cancelFunc != nil { cancelFunc() }
 	}
 
-	// Logic: Clear is clickable only when NOT resolving
-	if ui.BtnClear.Clicked(gtx) && currentState != StateResolving {
+	if currentState != StateResolving && ui.BtnClear.Clicked(gtx) {
 		ui.LogMutex.Lock()
 		ui.Logs = []string{}
+		ui.AutoScroll = true
 		ui.LogMutex.Unlock()
 		
 		ui.StateMutex.Lock()
 		ui.State = StateIdle
-		ui.TotalLines = 0
-		ui.CurrentLine = 0
+		ui.TotalLines, ui.CurrentLine = 0, 0
 		ui.StateMutex.Unlock()
 	}
 
-	if ui.BtnInput.Clicked(gtx) { 
-		openFile("input.txt")
-	}
-	if ui.BtnSettings.Clicked(gtx) { 
-		openFile("settings.txt")
-	}
-	if ui.BtnOutput.Clicked(gtx) { 
-		openFile("output.txt")
-	}
+	if ui.BtnInput.Clicked(gtx) { openFile("input.txt") }
+	if ui.BtnSettings.Clicked(gtx) { openFile("settings.txt") }
+	if ui.BtnOutput.Clicked(gtx) { openFile("output.txt") }
 }
 
 func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	ui.updateTheme()
 
 	ui.StateMutex.Lock()
-	currentState := ui.State
-	total := ui.TotalLines
-	current := ui.CurrentLine
+	currentState, total, current := ui.State, ui.TotalLines, ui.CurrentLine
 	ui.StateMutex.Unlock()
 
 	if currentState == StateResolving {
@@ -205,17 +183,19 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	paint.Fill(gtx.Ops, ui.Theme.Bg)
 
 	ui.LogMutex.Lock()
-	// Intelligent autoscroll: only if user is near the bottom (within 5 lines)
-	isNearBottom := ui.LogList.Position.First >= len(ui.Logs)-5
-	if ui.NewLogAdded && isNearBottom && len(ui.Logs) > 0 {
-		ui.LogList.Position.First = len(ui.Logs) - 1
-		ui.LogList.Position.Offset = 0
+	// Update AutoScroll intent based on user interaction from the previous frame
+	if !ui.LogList.Position.BeforeEnd {
+		ui.AutoScroll = true
+	} else {
+		// If user moved away from the bottom, disable sticking
+		ui.AutoScroll = false
 	}
-	ui.NewLogAdded = false
+	ui.LogList.ScrollToEnd = ui.AutoScroll
 	logsCopy := append([]string(nil), ui.Logs...)
 	ui.LogMutex.Unlock()
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// Header with Buttons
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
@@ -223,19 +203,16 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									// Start button: disabled if resolving
 									return ui.drawStateButton(gtx, &ui.BtnStart, "Start", color.NRGBA{R: 0, G: 150, B: 0, A: 255}, currentState != StateResolving)
 								})
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									// Stop button: disabled if NOT resolving
 									return ui.drawStateButton(gtx, &ui.BtnStop, "Stop", color.NRGBA{R: 200, G: 50, B: 50, A: 255}, currentState == StateResolving)
 								})
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									// Clear button: disabled if resolving
 									return ui.drawStateButton(gtx, &ui.BtnClear, "Clear", ui.Theme.Palette.ContrastBg, currentState != StateResolving)
 								})
 							}),
@@ -262,6 +239,7 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 
+		// Log Area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			logBg := color.NRGBA{R: 245, G: 245, B: 245, A: 255}
 			if ui.IsDarkMode { logBg = color.NRGBA{R: 30, G: 30, B: 30, A: 255} }
@@ -277,23 +255,19 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 
+		// Status Bar
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(10), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						var txt string
 						switch currentState {
-						case StateResolving:
-							txt = fmt.Sprintf("Processing: %d / %d", current, total)
-						case StateDone:
-							txt = fmt.Sprintf("Done: %d / %d", current, total)
-						case StateCancelled:
-							txt = fmt.Sprintf("Cancelled: %d / %d", current, total)
-						default:
-							txt = "Ready"
+						case StateResolving: txt = fmt.Sprintf("Processing: %d / %d", current, total)
+						case StateDone: txt = fmt.Sprintf("Done: %d / %d", current, total)
+						case StateCancelled: txt = fmt.Sprintf("Cancelled: %d / %d", current, total)
+						default: txt = "Ready"
 						}
-						lbl := material.Label(ui.Theme, unit.Sp(12), txt)
-						return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+						return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, material.Label(ui.Theme, unit.Sp(12), txt).Layout)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.drawProgressBar(gtx, currentState, current, total)
@@ -304,15 +278,28 @@ func (ui *UI) layout(gtx layout.Context) layout.Dimensions {
 	)
 }
 
-// drawStateButton renders a button with an explicit visual disabled state
 func (ui *UI) drawStateButton(gtx layout.Context, btn *widget.Clickable, label string, baseColor color.NRGBA, enabled bool) layout.Dimensions {
-	button := material.Button(ui.Theme, btn, label)
 	if !enabled {
-		button.Background = color.NRGBA{R: 120, G: 120, B: 120, A: 150}
-	} else {
-		button.Background = baseColor
+		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				rr := gtx.Dp(unit.Dp(4))
+				stack := clip.UniformRRect(image.Rectangle{Max: gtx.Constraints.Min}, rr).Push(gtx.Ops)
+				paint.Fill(gtx.Ops, color.NRGBA{R: 120, G: 120, B: 120, A: 120})
+				stack.Pop()
+				return layout.Dimensions{Size: gtx.Constraints.Min}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(ui.Theme, unit.Sp(14), label)
+					l.Color = color.NRGBA{R: 200, G: 200, B: 200, A: 255}
+					return l.Layout(gtx)
+				})
+			}),
+		)
 	}
-	return button.Layout(gtx)
+	b := material.Button(ui.Theme, btn, label)
+	b.Background = baseColor
+	return b.Layout(gtx)
 }
 
 func (ui *UI) drawProgressBar(gtx layout.Context, currentState AppState, current, total int) layout.Dimensions {
@@ -324,22 +311,11 @@ func (ui *UI) drawProgressBar(gtx layout.Context, currentState AppState, current
 	var progressWidth int
 
 	switch currentState {
-	case StateIdle:
-		fgColor = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
-		progressWidth = 0
-	case StateDone:
-		fgColor = color.NRGBA{R: 0, G: 180, B: 0, A: 255}
-		progressWidth = width
-	case StateCancelled:
-		fgColor = color.NRGBA{R: 255, G: 165, B: 0, A: 255}
-		if total > 0 {
-			progressWidth = int(float32(width) * (float32(current) / float32(total)))
-		}
-	case StateResolving:
-		fgColor = color.NRGBA{R: 0, G: 120, B: 215, A: 255}
-		if total > 0 {
-			progressWidth = int(float32(width) * (float32(current) / float32(total)))
-		}
+	case StateDone: fgColor = color.NRGBA{R: 0, G: 180, B: 0, A: 255}; progressWidth = width
+	case StateCancelled, StateResolving:
+		if currentState == StateCancelled { fgColor = color.NRGBA{R: 255, G: 165, B: 0, A: 255} } else { fgColor = color.NRGBA{R: 0, G: 120, B: 215, A: 255} }
+		if total > 0 { progressWidth = int(float32(width) * (float32(current) / float32(total))) }
+	default: progressWidth = 0
 	}
 	
 	if progressWidth > 0 {
@@ -359,53 +335,46 @@ func (ui *UI) updateTheme() {
 func (ui *UI) addLog(msg string) {
 	ui.LogMutex.Lock()
 	ui.Logs = append(ui.Logs, fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), msg))
-	ui.NewLogAdded = true
+	
+	if len(ui.Logs) > maxLogs {
+		ui.Logs = ui.Logs[len(ui.Logs)-maxLogs:]
+		ui.Logs[0] = fmt.Sprintf("[%s] [SYSTEM] Older logs truncated", time.Now().Format("15:04:05"))
+	}
 	ui.LogMutex.Unlock()
 	ui.Window.Invalidate()
 }
 
-func openFile(fn string) error {
-	path, err := filepath.Abs(fn)
-	if err != nil { return err }
-	var cmd *exec.Cmd
+func openFile(fn string) {
+	path, _ := filepath.Abs(fn)
 	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
-	case "darwin":
-		cmd = exec.Command("open", path)
-	default:
-		cmd = exec.Command("xdg-open", path)
+	case "windows": exec.Command("rundll32", "url.dll,FileProtocolHandler", path).Start()
+	case "darwin": exec.Command("open", path).Start()
+	default: exec.Command("xdg-open", path).Start()
 	}
-	return cmd.Start()
 }
 
 func (ui *UI) startResolving(ctx context.Context) {
 	ui.addLog("Process started...")
 	cfg := loadSettings()
-	
 	lines, err := readLines("input.txt")
 	if err != nil {
-		ui.addLog("Error reading input.txt: " + err.Error())
+		ui.addLog("Error: " + err.Error())
 		ui.finish(StateIdle)
 		return
 	}
 
 	var tasks []string
 	for _, l := range lines {
-		if strings.TrimSpace(l) != "" {
-			tasks = append(tasks, l)
-		}
+		if strings.TrimSpace(l) != "" { tasks = append(tasks, l) }
 	}
 
 	ui.StateMutex.Lock()
-	ui.TotalLines = len(tasks)
-	ui.CurrentLine = 0
+	ui.TotalLines, ui.CurrentLine = len(tasks), 0
 	ui.StateMutex.Unlock()
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
-	port := cfg.Port
-	if port == "" { port = "443" }
-	dohURL := fmt.Sprintf("https://%s:%s/dns-query", cfg.Server, port)
+	dURL := fmt.Sprintf("https://%s:%s/dns-query", cfg.Server, cfg.Port)
+	if cfg.Port == "" { dURL = fmt.Sprintf("https://%s/dns-query", cfg.Server) }
 
 	var output []string
 	for _, line := range tasks {
@@ -426,39 +395,31 @@ func (ui *UI) startResolving(ctx context.Context) {
 		}
 
 		ui.addLog("Resolving: " + trimmed)
-		
 		var foundIps []string
 		
-		handleResolve := func(qtype uint16, typeName string) {
-			ips, err := resolveBinaryDoH(ctx, httpClient, dohURL, trimmed, qtype)
+		resolve := func(qtype uint16, name string) {
+			ips, err := resolveBinaryDoH(ctx, httpClient, dURL, trimmed, qtype)
 			if err != nil {
-				ui.addLog(fmt.Sprintf("   [%s] Failed after retries: %v", typeName, err))
-			} else if len(ips) > 0 {
+				ui.addLog(fmt.Sprintf("   [%s] Error: %v", name, err))
+			} else {
 				foundIps = append(foundIps, ips...)
-				for _, ip := range ips {
-					ui.addLog(fmt.Sprintf("   [%s] Found: %s", typeName, ip))
-				}
+				for _, ip := range ips { ui.addLog(fmt.Sprintf("   [%s] Found: %s", name, ip)) }
 			}
 		}
 
-		if cfg.IPv4 { handleResolve(dns.TypeA, "A") }
-		if cfg.IPv6 { handleResolve(dns.TypeAAAA, "AAAA") }
+		if cfg.IPv4 { resolve(dns.TypeA, "A") }
+		if cfg.IPv6 { resolve(dns.TypeAAAA, "AAAA") }
 
 		if len(foundIps) == 0 {
 			output = append(output, "# Not found: "+trimmed)
 		} else {
-			for _, ip := range foundIps {
-				output = append(output, fmt.Sprintf("%s %s", ip, trimmed))
-			}
+			for _, ip := range foundIps { output = append(output, fmt.Sprintf("%s %s", ip, trimmed)) }
 		}
 		ui.incrementProgress()
 	}
 
-	if err := writeLines("output.txt", output); err != nil {
-		ui.addLog("Error saving output.txt: " + err.Error())
-	} else {
-		ui.addLog("Results successfully saved to output.txt")
-	}
+	writeLines("output.txt", output)
+	ui.addLog("Process finished. Results saved.")
 	ui.finish(StateDone)
 }
 
@@ -481,90 +442,56 @@ func resolveBinaryDoH(ctx context.Context, client *http.Client, url, domain stri
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), qtype)
 	m.RecursionDesired = true
-	buf, err := m.Pack()
-	if err != nil { 
-		return nil, fmt.Errorf("failed to pack DNS query: %w", err) 
-	}
+	buf, _ := m.Pack()
 
-	const maxRetries = 3
 	var lastErr error
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(buf))
-		if err != nil { 
-			return nil, fmt.Errorf("failed to create HTTP request: %w", err) 
-		}
+	for attempt := 1; attempt <= 3; attempt++ {
+		if ctx.Err() != nil { return nil, ctx.Err() }
+		req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(buf))
 		req.Header.Set("Content-Type", "application/dns-message")
 		req.Header.Set("Accept", "application/dns-message")
 
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
-			if attempt < maxRetries {
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			break
+			time.Sleep(time.Second)
+			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			lastErr = fmt.Errorf("server returned HTTP %d (%s)", resp.StatusCode, string(body))
-			// Retry only on server side errors or rate limit
-			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries {
-				time.Sleep(1 * time.Second)
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			if resp.StatusCode >= 500 || resp.StatusCode == 429 {
+				time.Sleep(time.Second)
 				continue
 			}
 			return nil, lastErr
 		}
 
-		body, err := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if err != nil { 
-			lastErr = fmt.Errorf("failed to read response body: %w", err)
-			continue
-		}
-
 		respMsg := new(dns.Msg)
-		if err := respMsg.Unpack(body); err != nil { 
-			lastErr = fmt.Errorf("failed to unpack DNS response: %w", err)
-			continue
-		}
-
-		if respMsg.Rcode != dns.RcodeSuccess {
-			return nil, fmt.Errorf("DNS error: %s", dns.RcodeToString[respMsg.Rcode])
-		}
+		if err := respMsg.Unpack(body); err != nil { return nil, err }
 
 		var ips []string
 		for _, a := range respMsg.Answer {
-			if t, ok := a.(*dns.A); ok && qtype == dns.TypeA { 
-				ips = append(ips, t.A.String()) 
-			}
-			if t, ok := a.(*dns.AAAA); ok && qtype == dns.TypeAAAA { 
-				ips = append(ips, t.AAAA.String()) 
-			}
+			if t, ok := a.(*dns.A); ok && qtype == dns.TypeA { ips = append(ips, t.A.String()) }
+			if t, ok := a.(*dns.AAAA); ok && qtype == dns.TypeAAAA { ips = append(ips, t.AAAA.String()) }
 		}
 		return ips, nil
 	}
-
-	return nil, fmt.Errorf("all %d attempts failed: %v", maxRetries, lastErr)
+	return nil, lastErr
 }
 
 func loadSettings() Config {
-	c := Config{Server: "dns.google", IPv4: true, IPv6: false}
+	c := Config{Server: "dns.google", Port: "443", IPv4: true, IPv6: false}
 	f, err := os.Open("settings.txt")
 	if err != nil { return c }
 	defer f.Close()
 	s := bufio.NewScanner(f)
 	for s.Scan() {
-		l := strings.TrimSpace(s.Text())
-		if l == "" || strings.HasPrefix(l, "#") { continue }
-		p := strings.SplitN(l, "=", 2)
+		p := strings.SplitN(s.Text(), "=", 2)
 		if len(p) < 2 { continue }
 		k, v := strings.TrimSpace(p[0]), strings.TrimSpace(p[1])
 		switch k {
@@ -585,13 +512,10 @@ func readLines(p string) ([]string, error) {
 	return l, s.Err()
 }
 
-func writeLines(p string, l []string) error {
-	f, err := os.Create(p)
-	if err != nil { return err }
+func writeLines(p string, l []string) {
+	f, _ := os.Create(p)
 	defer f.Close()
 	w := bufio.NewWriter(f)
-	for _, line := range l {
-		if _, err := w.WriteString(line + "\n"); err != nil { return err }
-	}
-	return w.Flush()
+	for _, line := range l { w.WriteString(line + "\n") }
+	w.Flush()
 }
