@@ -7,13 +7,12 @@ namespace DNStoHOSTS
     {
         protected override void OnStartup(StartupEventArgs e)
         {
-            // Перехват всех необработанных ошибок
             AppDomain.CurrentDomain.UnhandledException += (s, ex) => 
-                MessageBox.Show(ex.ExceptionObject.ToString(), "Критическая ошибка");
+                MessageBox.Show(ex.ExceptionObject.ToString(), "Critical Error");
 
             DispatcherUnhandledException += (s, ex) => 
             {
-                MessageBox.Show(ex.Exception.ToString(), "Ошибка интерфейса");
+                MessageBox.Show(ex.Exception.ToString(), "UI Error");
                 ex.Handled = true;
             };
 

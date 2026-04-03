@@ -13,7 +13,6 @@
         <SolidColorBrush x:Key="ButtonBgColor" Color="#333333"/>
         <SolidColorBrush x:Key="ButtonHoverColor" Color="#3E3E42"/>
         <SolidColorBrush x:Key="BorderColor" Color="#3F3F46"/>
-
         <SolidColorBrush x:Key="ProgressGray" Color="#808080"/>
         <SolidColorBrush x:Key="ProgressBlue" Color="#0078D7"/>
         <SolidColorBrush x:Key="ProgressGreen" Color="#10893E"/>
@@ -30,7 +29,7 @@
                                     <Thumb>
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
-                                                <Border Background="{DynamicResource BorderColor}" CornerRadius="4" Margin="1,0,1,0"/>
+                                                <Border Background="#3F3F46" CornerRadius="4" Margin="1,0,1,0"/>
                                             </ControlTemplate>
                                         </Thumb.Template>
                                     </Thumb>
@@ -49,18 +48,12 @@
             <Setter Property="BorderBrush" Value="{DynamicResource BorderColor}"/>
             <Setter Property="Padding" Value="10,5"/>
             <Setter Property="Margin" Value="2"/>
-            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource ButtonHoverColor}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -93,7 +86,8 @@
                  BorderBrush="{DynamicResource BorderColor}"
                  BorderThickness="1"
                  FontFamily="Consolas" FontSize="12"
-                 TextWrapping="No" VerticalScrollBarVisibility="Auto"
+                 TextWrapping="NoWrap" 
+                 VerticalScrollBarVisibility="Auto"
                  HorizontalScrollBarVisibility="Auto">
             <TextBox.Resources>
                 <Style TargetType="ScrollBar" BasedOn="{StaticResource ModernScrollBar}"/>
