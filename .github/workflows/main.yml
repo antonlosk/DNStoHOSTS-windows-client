@@ -53,7 +53,7 @@ jobs:
         msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=bin\Release\
 
     - name: Rename and Release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ env.NEW_VERSION }}
         name: Release v${{ env.NEW_VERSION }}
