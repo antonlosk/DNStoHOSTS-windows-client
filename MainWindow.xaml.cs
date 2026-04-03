@@ -5,11 +5,11 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
-using DnsClient;
 
 namespace DNStoHOSTS
 {
@@ -31,51 +31,66 @@ namespace DNStoHOSTS
 
         private void CheckAndCreateDefaultFiles()
         {
-            try {
+            try 
+            {
                 if (!File.Exists(InputFile)) File.WriteAllText(InputFile, "# Google\r\ngoogle.com\r\n");
                 if (!File.Exists(SettingsFile)) File.WriteAllText(SettingsFile, "server=dns.google\r\nport=443\r\nipv4=true\r\nipv6=false\r\n");
-            } catch { }
+            } 
+            catch { }
         }
 
-        private void Log(string m) {
-            Dispatcher.Invoke(() => {
-                LogTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {m}\r\n");
+        private void Log(string message)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                LogTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\r\n");
                 LogTextBox.ScrollToEnd();
             });
         }
 
-        private void BtnTheme_Click(object sender, RoutedEventArgs e) {
+        private void BtnTheme_Click(object sender, RoutedEventArgs e)
+        {
             _isDarkTheme = !_isDarkTheme;
             if (_isDarkTheme) SetColors("#1E1E1E", "#252526", "#D4D4D4", "#333333");
             else SetColors("#F3F3F3", "#FFFFFF", "#000000", "#E1E1E1");
         }
 
-        private void SetColors(string win, string log, string text, string btn) {
+        private void SetColors(string win, string log, string text, string btn)
+        {
             Resources["WindowBgColor"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(win));
             Resources["LogBgColor"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(log));
             Resources["TextColor"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(text));
             Resources["ButtonBgColor"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(btn));
         }
 
-        private void BtnFile_Click(object sender, RoutedEventArgs e) {
+        private void BtnFile_Click(object sender, RoutedEventArgs e)
+        {
             if (sender is System.Windows.Controls.Button btn && btn.Tag is string fn && File.Exists(fn))
                 Process.Start(new ProcessStartInfo(fn) { UseShellExecute = true });
         }
 
         private void BtnClear_Click(object sender, RoutedEventArgs e) => LogTextBox.Clear();
+
         private void BtnStop_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();
 
-        private async void BtnStart_Click(object sender, RoutedEventArgs e) {
+        private async void BtnStart_Click(object sender, RoutedEventArgs e)
+        {
             if (_cts != null) return;
             _cts = new CancellationTokenSource();
             MainProgress.Foreground = (SolidColorBrush)FindResource("ProgressBlue");
-            try { await Task.Run(() => ProcessDomains(_cts.Token)); MainProgress.Foreground = (SolidColorBrush)FindResource("ProgressGreen"); }
-            catch (OperationCanceledException) { Log("Stopped."); }
-            catch (Exception ex) { Log("Error: " + ex.Message); }
+
+            try 
+            { 
+                await Task.Run(() => ProcessDomains(_cts.Token)); 
+                MainProgress.Foreground = (SolidColorBrush)FindResource("ProgressGreen"); 
+            }
+            catch (OperationCanceledException) { Log("Stopped by user."); }
+            catch (Exception ex) { Log("Critical Error: " + ex.Message); }
             finally { _cts.Dispose(); _cts = null; }
         }
 
-        private async Task ProcessDomains(CancellationToken token) {
+        private async Task ProcessDomains(CancellationToken token)
+        {
             Log("Starting...");
             var settings = ReadSettings();
             if (!File.Exists(InputFile)) return;
@@ -87,57 +102,166 @@ namespace DNStoHOSTS
             Dispatcher.Invoke(() => { MainProgress.Maximum = targets.Count; MainProgress.Value = 0; });
 
             int count = 0;
-            foreach (var line in lines) {
+            foreach (var line in lines)
+            {
                 token.ThrowIfCancellationRequested();
                 if (string.IsNullOrWhiteSpace(line) || line.Trim().StartsWith("#")) { output.Add(line); continue; }
 
                 string domain = line.Trim();
                 Log("Resolving: " + domain);
+                
                 var ips = new List<string>();
-                var errs = new List<string>();
+                var errors = new List<string>();
+                
+                if (settings.ipv4) ips.AddRange(await Resolve(domain, 1, settings, token, errors));
+                if (settings.ipv6) ips.AddRange(await Resolve(domain, 28, settings, token, errors));
 
-                if (settings.ipv4) ips.AddRange(await ResolveLib(domain, QueryType.A, settings, token, errs));
-                if (settings.ipv6) ips.AddRange(await ResolveLib(domain, QueryType.AAAA, settings, token, errs));
-
-                if (!ips.Any()) {
-                    foreach(var err in errs.Distinct()) Log($"  [!] {err}");
+                if (!ips.Any())
+                {
+                    foreach(var err in errors.Distinct()) Log($"  [!] {err}");
                     output.Add("# No records: " + domain);
-                } else {
-                    foreach (var ip in ips.Distinct()) { Log("  -> " + ip); output.Add($"{ip} {domain}"); }
                 }
+                else 
+                {
+                    foreach (var ip in ips.Distinct()) 
+                    { 
+                        Log("  -> " + ip); 
+                        output.Add($"{ip} {domain}"); 
+                    }
+                }
+
                 count++;
                 Dispatcher.Invoke(() => MainProgress.Value = count);
             }
             File.WriteAllLines(OutputFile, output);
-            Log("Done.");
+            Log("Done. Saved to " + OutputFile);
         }
 
-        private async Task<List<string>> ResolveLib(string domain, QueryType type, dynamic s, CancellationToken t, List<string> errs) {
+        private async Task<List<string>> Resolve(string domain, ushort type, dynamic s, CancellationToken t, List<string> errorList)
+        {
             var res = new List<string>();
-            try {
-                var handler = new DnsMessageHandler();
-                var query = new DnsRequestMessage(new DnsRequestHeader(Guid.NewGuid().GetHashCode(), true, DnsOpCode.Query), new DnsQuestion(domain, type));
-                var data = handler.GetRequestData(query);
+            string typeStr = (type == 1) ? "IPv4" : "IPv6";
+            
+            try
+            {
+                // 1. Build strict RFC 8484 compliant DNS query
+                byte[] dnsQuery = BuildQuery(domain, type);
+                
+                // 2. Base64Url encode it
+                string base64Query = Convert.ToBase64String(dnsQuery)
+                    .Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
-                string base64 = Convert.ToBase64String(data.ToArray()).Replace('+', '-').Replace('/', '_').TrimEnd('=');
-                string url = $"https://{s.server}:{s.port}/dns-query?dns={base64}";
+                string url = $"https://{s.server}:{s.port}/dns-query?dns={base64Query}";
 
-                using (var req = new HttpRequestMessage(HttpMethod.Get, url)) {
+                using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+                {
+                    // Strict headers to bypass WAFs and comply with DoH standards
                     req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
-                    req.Headers.UserAgent.ParseAdd("DNStoHOSTS/1.2");
-                    var resp = await _httpClient.SendAsync(req, t);
-                    if (resp.IsSuccessStatusCode) {
-                        var b = await resp.Content.ReadAsByteArrayAsync();
-                        var dnsResp = handler.GetResponseMessage(b);
-                        foreach (var ans in dnsResp.Answers)
-                            if (ans is DnsClient.Protocol.AddressRecord a) res.Add(a.Address.ToString());
-                    } else errs.Add($"HTTP {(int)resp.StatusCode}");
+                    req.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+
+                    using (var cts = CancellationTokenSource.CreateLinkedTokenSource(t))
+                    {
+                        cts.CancelAfter(TimeSpan.FromSeconds(8));
+                        var resp = await _httpClient.SendAsync(req, cts.Token);
+                        
+                        if (resp.IsSuccessStatusCode) 
+                        {
+                            byte[] data = await resp.Content.ReadAsByteArrayAsync();
+                            var parsed = ParseResponse(data, type);
+                            if (parsed.Count == 0) errorList.Add($"{typeStr}: No records found");
+                            res.AddRange(parsed);
+                        }
+                        else
+                        {
+                            errorList.Add($"{typeStr}: HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase})");
+                        }
+                    }
                 }
-            } catch (Exception ex) { errs.Add(ex.Message); }
+            }
+            catch (TaskCanceledException) { errorList.Add($"{typeStr}: Timeout"); }
+            catch (HttpRequestException ex) { errorList.Add($"{typeStr}: Connection error ({ex.InnerException?.Message ?? ex.Message})"); }
+            catch (Exception ex) { errorList.Add($"{typeStr}: Error: {ex.Message}"); }
+            
             return res;
         }
 
-        private dynamic ReadSettings() {
+        private byte[] BuildQuery(string domain, ushort type)
+        {
+            var ms = new MemoryStream();
+            
+            // ID MUST be 0x00 0x00 for GET requests per RFC 8484 to allow HTTP caching
+            // Flags: 0x01 0x00 (Standard query, Recursion desired)
+            // QDCOUNT: 0x00 0x01 (1 question)
+            // ANCOUNT, NSCOUNT, ARCOUNT: 0x00 0x00
+            ms.Write(new byte[] { 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, 0, 12);
+            
+            string[] parts = domain.TrimEnd('.').Split('.');
+            foreach (var part in parts) 
+            { 
+                ms.WriteByte((byte)part.Length); 
+                var b = Encoding.ASCII.GetBytes(part); 
+                ms.Write(b, 0, b.Length); 
+            }
+            
+            // Null terminator for the domain, QTYPE (2 bytes), QCLASS (2 bytes, IN = 1)
+            ms.Write(new byte[] { 0, (byte)(type >> 8), (byte)(type & 0xff), 0, 1 }, 0, 5);
+            return ms.ToArray();
+        }
+
+        private List<string> ParseResponse(byte[] r, ushort requestedType)
+        {
+            var ips = new List<string>();
+            try 
+            {
+                int off = 12;
+                int qdc = (r[4] << 8) | r[5]; 
+                int anc = (r[6] << 8) | r[7];
+
+                for (int i = 0; i < qdc; i++) 
+                {
+                    SkipDnsName(r, ref off);
+                    off += 4; 
+                }
+
+                for (int i = 0; i < anc; i++) 
+                {
+                    SkipDnsName(r, ref off);
+                    if (off + 10 > r.Length) break;
+                    ushort type = (ushort)((r[off] << 8) | r[off + 1]); 
+                    off += 8; 
+                    ushort len = (ushort)((r[off] << 8) | r[off + 1]); 
+                    off += 2;
+
+                    if (type == requestedType && off + len <= r.Length) 
+                    {
+                        if (type == 1 && len == 4)
+                            ips.Add($"{r[off]}.{r[off+1]}.{r[off+2]}.{r[off+3]}");
+                        else if (type == 28 && len == 16)
+                        { 
+                            byte[] b = new byte[16]; 
+                            Array.Copy(r, off, b, 0, 16); 
+                            ips.Add(new System.Net.IPAddress(b).ToString()); 
+                        }
+                    }
+                    off += len;
+                }
+            } catch { }
+            return ips;
+        }
+
+        private void SkipDnsName(byte[] r, ref int off)
+        {
+            while (off < r.Length)
+            {
+                byte len = r[off];
+                if (len == 0) { off++; break; }
+                if ((len & 0xc0) == 0xc0) { off += 2; break; } 
+                off += len + 1;
+            }
+        }
+
+        private dynamic ReadSettings()
+        {
             string s = "dns.google"; int p = 443; bool v4 = true, v6 = false;
             if (File.Exists(SettingsFile))
                 foreach (var l in File.ReadAllLines(SettingsFile)) {
