@@ -1,0 +1,76 @@
+name: Build and Release DNStoHOSTS
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.3
+
+    - name: Setup NuGet
+      uses: nuget/setup-nuget@v1
+
+    - name: Calculate Next Version
+      id: versioning
+      shell: pwsh
+      run: |
+        # Get latest tag or default to v0.0.0
+        $latestTag = git tag --sort=-v:refname | Select-Object -First 1
+        if (!$latestTag) { $latestTag = "v0.0.0" }
+        $cleanTag = $latestTag.TrimStart('v')
+        $parts = $cleanTag.Split('.')
+        
+        [int]$major = $parts[0]
+        [int]$minor = $parts[1]
+        [int]$patch = $parts[2]
+
+        # User Logic: 0.0.10 -> 0.1.0, 0.10.0 -> 1.0.0
+        if ($patch -lt 10) {
+            $patch++
+        } else {
+            $patch = 0
+            if ($minor -lt 10) {
+                $minor++
+            } else {
+                $minor = 0
+                $major++
+            }
+        }
+
+        $newVersion = "$major.$minor.$patch"
+        echo "NEW_VERSION=$newVersion" >> $env:GITHUB_ENV
+        echo "Calculated version: v$newVersion"
+
+    - name: Restore NuGet packages
+      run: nuget restore DNStoHOSTS.sln
+
+    - name: Build Application
+      run: |
+        msbuild DNStoHOSTS.csproj /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=bin\Release\
+
+    - name: Prepare Artifact
+      shell: pwsh
+      run: |
+        $exePath = "bin\Release\DNStoHOSTS.exe"
+        $newName = "DNStoHOSTS_v${{ env.NEW_VERSION }}.exe"
+        Move-Item -Path $exePath -Destination "./$newName"
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ env.NEW_VERSION }}
+        name: Release v${{ env.NEW_VERSION }}
+        files: DNStoHOSTS_v${{ env.NEW_VERSION }}.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
