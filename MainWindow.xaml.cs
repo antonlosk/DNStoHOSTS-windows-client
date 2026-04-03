@@ -23,18 +23,17 @@ namespace DNStoHOSTS
         private bool _isDarkTheme = true;
         private CancellationTokenSource _cts;
 
-        // Отключаем прокси для ускорения работы и избежания подвисаний
+        // Используем один экземпляр HttpClient для всего приложения
         private static readonly HttpClient _httpClient = new HttpClient(new HttpClientHandler()
         {
-            UseProxy = false,
+            UseProxy = false, // Отключаем прокси для исключения задержек
             Proxy = null
         });
 
         public MainWindow()
         {
-            // КРИТИЧЕСКИЙ ФИКС ДЛЯ .NET 4.8: Включаем современные протоколы шифрования
-            // Без этого dns.google и другие часто выдают Timeout
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | (SecurityProtocolType)12288; // 12288 = TLS 1.3
+            // Настройка TLS для .NET 4.8 (включаем 1.2 и 1.3)
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | (SecurityProtocolType)12288;
             ServicePointManager.Expect100Continue = false;
             ServicePointManager.DefaultConnectionLimit = 20;
 
@@ -46,7 +45,7 @@ namespace DNStoHOSTS
         {
             try
             {
-                if (!File.Exists(InputFile)) File.WriteAllText(InputFile, "# Google\r\ngoogle.com\r\n");
+                if (!File.Exists(InputFile)) File.WriteAllText(InputFile, "# List of domains\r\ngoogle.com\r\n");
                 if (!File.Exists(SettingsFile)) File.WriteAllText(SettingsFile, "server=dns.google\r\nport=443\r\nipv4=true\r\nipv6=false\r\n");
             }
             catch { }
@@ -83,7 +82,6 @@ namespace DNStoHOSTS
         }
 
         private void BtnClear_Click(object sender, RoutedEventArgs e) => LogTextBox.Clear();
-
         private void BtnStop_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();
 
         private async void BtnStart_Click(object sender, RoutedEventArgs e)
@@ -97,8 +95,8 @@ namespace DNStoHOSTS
                 await Task.Run(() => ProcessDomains(_cts.Token)); 
                 MainProgress.Foreground = (SolidColorBrush)FindResource("ProgressGreen"); 
             }
-            catch (OperationCanceledException) { Log("Stopped by user."); }
-            catch (Exception ex) { Log("Critical Error: " + ex.Message); }
+            catch (OperationCanceledException) { Log("Stopped."); }
+            catch (Exception ex) { Log("Error: " + ex.Message); }
             finally { _cts.Dispose(); _cts = null; }
         }
 
@@ -118,28 +116,28 @@ namespace DNStoHOSTS
             foreach (var line in lines)
             {
                 token.ThrowIfCancellationRequested();
-                if (string.IsNullOrWhiteSpace(line) || line.Trim().StartsWith("#")) { output.Add(line); continue; }
+                string trimmed = line.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("#")) { output.Add(line); continue; }
 
-                string domain = line.Trim();
-                Log("Resolving: " + domain);
-                
+                Log("Resolving: " + trimmed);
                 var ips = new List<string>();
                 var errors = new List<string>();
                 
-                if (settings.ipv4) ips.AddRange(await ResolveDoH(domain, 1, settings, token, errors));
-                if (settings.ipv6) ips.AddRange(await ResolveDoH(domain, 28, settings, token, errors));
+                // 1 = A (IPv4), 28 = AAAA (IPv6)
+                if (settings.ipv4) ips.AddRange(await ResolveDoH(trimmed, 1, settings, token, errors));
+                if (settings.ipv6) ips.AddRange(await ResolveDoH(trimmed, 28, settings, token, errors));
 
                 if (!ips.Any())
                 {
                     foreach(var err in errors.Distinct()) Log($"  [!] {err}");
-                    output.Add("# No records: " + domain);
+                    output.Add("# Failed: " + trimmed);
                 }
                 else 
                 {
                     foreach (var ip in ips.Distinct()) 
                     { 
                         Log("  -> " + ip); 
-                        output.Add($"{ip} {domain}"); 
+                        output.Add($"{ip} {trimmed}"); 
                     }
                 }
 
@@ -147,7 +145,7 @@ namespace DNStoHOSTS
                 Dispatcher.Invoke(() => MainProgress.Value = count);
             }
             File.WriteAllLines(OutputFile, output);
-            Log("Done. Results saved.");
+            Log("Done. Saved to " + OutputFile);
         }
 
         private async Task<List<string>> ResolveDoH(string domain, ushort type, dynamic s, CancellationToken t, List<string> errorList)
@@ -157,18 +155,19 @@ namespace DNStoHOSTS
             
             try
             {
-                // Формируем DNS запрос (RFC 1035 / RFC 8484)
                 byte[] dnsQuery = BuildDnsPacket(domain, type);
-                string base64Query = Convert.ToBase64String(dnsQuery).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+                
+                // Очистка адреса хоста от лишних элементов
+                string host = ((string)s.server).Replace("https://", "").Trim().TrimEnd('/');
+                string url = $"https://{host}:{s.port}/dns-query";
 
-                // Очистка адреса сервера (убираем https:// и слэши)
-                string host = ((string)s.server).Replace("https://", "").TrimEnd('/');
-                string url = $"https://{host}:{s.port}/dns-query?dns={base64Query}";
-
-                using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+                // Используем POST для стабильности (избегаем ошибок 400 из-за Base64Url)
+                using (var req = new HttpRequestMessage(HttpMethod.Post, url))
                 {
+                    req.Content = new ByteArrayContent(dnsQuery);
+                    req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
                     req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
-                    req.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0");
+                    req.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0");
 
                     using (var cts = CancellationTokenSource.CreateLinkedTokenSource(t))
                     {
@@ -178,15 +177,15 @@ namespace DNStoHOSTS
                         if (resp.IsSuccessStatusCode) 
                         {
                             byte[] data = await resp.Content.ReadAsByteArrayAsync();
-                            res.AddRange(ParseDnsResponse(data, type));
+                            var parsed = ParseDnsResponse(data, type);
+                            if (parsed.Count > 0) res.AddRange(parsed);
+                            else errorList.Add($"{typeLabel}: No records");
                         }
                         else errorList.Add($"{typeLabel}: HTTP {(int)resp.StatusCode}");
                     }
                 }
             }
-            catch (TaskCanceledException) { errorList.Add($"{typeLabel}: Timeout"); }
             catch (Exception ex) { errorList.Add($"{typeLabel}: {ex.Message}"); }
-            
             return res;
         }
 
@@ -194,16 +193,27 @@ namespace DNStoHOSTS
         {
             using (var ms = new MemoryStream())
             {
-                // ID = 0000 (важно для DoH GET), Flags = 0100 (Query), QDCOUNT = 0001
-                ms.Write(new byte[] { 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, 0, 12);
-                foreach (var part in domain.Split('.'))
+                // Заголовок DNS (RFC 1035)
+                ms.Write(new byte[] { 0x12, 0x34 }, 0, 2); // ID
+                ms.Write(new byte[] { 0x01, 0x00 }, 0, 2); // Flags (RD=1)
+                ms.Write(new byte[] { 0x00, 0x01 }, 0, 2); // QDCOUNT (1 question)
+                ms.Write(new byte[] { 0, 0, 0, 0, 0, 0 }, 0, 6); // AN, NS, AR counts = 0
+
+                // Имя домена (google.com -> 6google3com0)
+                foreach (var part in domain.Trim().Split('.'))
                 {
+                    if (string.IsNullOrEmpty(part)) continue;
                     byte[] b = Encoding.ASCII.GetBytes(part);
                     ms.WriteByte((byte)b.Length);
                     ms.Write(b, 0, b.Length);
                 }
-                // Terminator (0), QTYPE (type), QCLASS (1 = IN)
-                ms.Write(new byte[] { 0, (byte)(type >> 8), (byte)(type & 0xff), 0, 1 }, 0, 5);
+                ms.WriteByte(0);
+
+                // Тип запроса и класс (1 = IN)
+                ms.WriteByte((byte)(type >> 8));
+                ms.WriteByte((byte)(type & 0xff));
+                ms.Write(new byte[] { 0, 1 }, 0, 2);
+
                 return ms.ToArray();
             }
         }
@@ -213,11 +223,11 @@ namespace DNStoHOSTS
             var ips = new List<string>();
             try
             {
-                int pos = 12; // Пропуск заголовка
+                int pos = 12;
                 int qdc = (r[4] << 8) | r[5];
                 int anc = (r[6] << 8) | r[7];
 
-                for (int i = 0; i < qdc; i++) { SkipName(r, ref pos); pos += 4; } // Пропуск вопросов
+                for (int i = 0; i < qdc; i++) { SkipName(r, ref pos); pos += 4; }
 
                 for (int i = 0; i < anc; i++)
                 {
