@@ -145,17 +145,20 @@ namespace DNStoHOSTS
             
             try
             {
-                // Возвращено как было: строго https://server:port/dns-query
-                string url = $"https://{s.server}:{s.port}/dns-query";
+                // Формируем бинарный запрос
+                byte[] dnsQuery = BuildQuery(domain, type);
+                
+                // Кодируем в Base64Url (стандарт DoH GET)
+                string base64Query = Convert.ToBase64String(dnsQuery)
+                    .Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
-                using (var req = new HttpRequestMessage(HttpMethod.Post, url))
+                // Формируем URL. Метод GET через параметр ?dns= наиболее совместим
+                string url = $"https://{s.server}:{s.port}/dns-query?dns={base64Query}";
+
+                using (var req = new HttpRequestMessage(HttpMethod.Get, url))
                 {
-                    var queryData = BuildQuery(domain, type);
-                    req.Content = new ByteArrayContent(queryData);
-                    
-                    req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
                     req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
-                    req.Headers.UserAgent.ParseAdd("DNStoHOSTS-Client/1.1");
+                    req.Headers.UserAgent.ParseAdd("DNStoHOSTS-Client/1.2");
 
                     using (var cts = CancellationTokenSource.CreateLinkedTokenSource(t))
                     {
