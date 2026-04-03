@@ -145,22 +145,28 @@ namespace DNStoHOSTS
             
             try
             {
-                using (var req = new HttpRequestMessage(HttpMethod.Post, $"https://{s.server}:{s.port}/dns-query"))
+                // Возвращено как было: строго https://server:port/dns-query
+                string url = $"https://{s.server}:{s.port}/dns-query";
+
+                using (var req = new HttpRequestMessage(HttpMethod.Post, url))
                 {
-                    req.Content = new ByteArrayContent(BuildQuery(domain, type));
-                    req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
+                    var queryData = BuildQuery(domain, type);
+                    req.Content = new ByteArrayContent(queryData);
                     
-                    // Тайм-аут 7 секунд на запрос
+                    req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/dns-message");
+                    req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/dns-message"));
+                    req.Headers.UserAgent.ParseAdd("DNStoHOSTS-Client/1.1");
+
                     using (var cts = CancellationTokenSource.CreateLinkedTokenSource(t))
                     {
-                        cts.CancelAfter(TimeSpan.FromSeconds(7));
+                        cts.CancelAfter(TimeSpan.FromSeconds(8));
                         var resp = await _httpClient.SendAsync(req, cts.Token);
                         
                         if (resp.IsSuccessStatusCode) 
                         {
                             byte[] data = await resp.Content.ReadAsByteArrayAsync();
                             var parsed = ParseResponse(data, type);
-                            if (parsed.Count == 0) errorList.Add($"{typeStr}: Server returned 0 records");
+                            if (parsed.Count == 0) errorList.Add($"{typeStr}: Server returned no records");
                             res.AddRange(parsed);
                         }
                         else
@@ -170,7 +176,7 @@ namespace DNStoHOSTS
                     }
                 }
             }
-            catch (TaskCanceledException) { errorList.Add($"{typeStr}: Timeout (Check Server/Port)"); }
+            catch (TaskCanceledException) { errorList.Add($"{typeStr}: Timeout"); }
             catch (HttpRequestException ex) { errorList.Add($"{typeStr}: Network error ({ex.InnerException?.Message ?? ex.Message})"); }
             catch (Exception ex) { errorList.Add($"{typeStr}: Error: {ex.Message}"); }
             
@@ -209,12 +215,13 @@ namespace DNStoHOSTS
                 for (int i = 0; i < anc; i++) 
                 {
                     SkipDnsName(r, ref off);
+                    if (off + 10 > r.Length) break;
                     ushort type = (ushort)((r[off] << 8) | r[off + 1]); 
                     off += 8; 
                     ushort len = (ushort)((r[off] << 8) | r[off + 1]); 
                     off += 2;
 
-                    if (type == requestedType) 
+                    if (type == requestedType && off + len <= r.Length) 
                     {
                         if (type == 1 && len == 4)
                             ips.Add($"{r[off]}.{r[off+1]}.{r[off+2]}.{r[off+3]}");
