@@ -12,6 +12,13 @@ using System.Windows;
 
 namespace DNStoHOSTS
 {
+    public class Cfg {
+        public string s = "dns.google"; 
+        public int p = 443; 
+        public bool v4 = true; 
+        public bool v6 = false;
+    }
+
     public partial class MainWindow : Window
     {
         private const string InputFile = "input.txt";
@@ -20,18 +27,18 @@ namespace DNStoHOSTS
         private CancellationTokenSource _cts;
         private static readonly HttpClient _client = new HttpClient(new HttpClientHandler { UseProxy = false });
 
-        public MainWindow()
-        {
+        public MainWindow() {
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | (SecurityProtocolType)12288;
             InitializeComponent();
-            if (!File.Exists(InputFile)) File.WriteAllText(InputFile, "google.com\n");
-            if (!File.Exists(SettingsFile)) File.WriteAllText(SettingsFile, "server=dns.google\nport=443\nipv4=true\nipv6=false\n");
+            try {
+                if (!File.Exists(InputFile)) File.WriteAllText(InputFile, "google.com\n");
+                if (!File.Exists(SettingsFile)) File.WriteAllText(SettingsFile, "server=dns.google\nport=443\nipv4=true\nipv6=false\n");
+            } catch {}
         }
 
         private void Log(string m) => Dispatcher.Invoke(() => { LogTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {m}\r\n"); LogTextBox.ScrollToEnd(); });
 
-        private async void BtnStart_Click(object sender, RoutedEventArgs e)
-        {
+        private async void BtnStart_Click(object sender, RoutedEventArgs e) {
             if (_cts != null) return;
             _cts = new CancellationTokenSource();
             try { await Task.Run(() => MainWork(_cts.Token)); }
@@ -39,15 +46,13 @@ namespace DNStoHOSTS
             finally { _cts.Dispose(); _cts = null; }
         }
 
-        private async Task MainWork(CancellationToken ct)
-        {
+        private async Task MainWork(CancellationToken ct) {
             Log("Starting...");
             var cfg = ParseCfg();
             var lines = File.Exists(InputFile) ? File.ReadAllLines(InputFile) : new string[0];
             var res = new List<string>();
 
-            foreach (var line in lines)
-            {
+            foreach (var line in lines) {
                 if (ct.IsCancellationRequested) break;
                 string d = line.Trim();
                 if (string.IsNullOrEmpty(d) || d.StartsWith("#")) { res.Add(line); continue; }
@@ -65,8 +70,7 @@ namespace DNStoHOSTS
             Log("Done.");
         }
 
-        private async Task<List<string>> GetIP(string d, ushort t, dynamic c, CancellationToken ct)
-        {
+        private async Task<List<string>> GetIP(string d, ushort t, Cfg c, CancellationToken ct) {
             var ret = new List<string>();
             try {
                 var ms = new MemoryStream();
@@ -91,19 +95,20 @@ namespace DNStoHOSTS
                     for (int i = 0; i < qd; i++) { Skip(r, ref pos); pos += 4; }
                     for (int i = 0; i < an; i++) {
                         Skip(r, ref pos);
+                        if (pos + 10 > r.Length) break;
                         ushort type = (ushort)((r[pos] << 8) | r[pos + 1]); pos += 8;
                         ushort len = (ushort)((r[pos] << 8) | r[pos + 1]); pos += 2;
-                        if (type == t) {
+                        if (type == t && pos + len <= r.Length) {
                             if (t == 1 && len == 4) ret.Add($"{r[pos]}.{r[pos+1]}.{r[pos+2]}.{r[pos+3]}");
                             if (t == 28 && len == 16) {
                                 byte[] ipb = new byte[16]; Array.Copy(r, pos, ipb, 0, 16);
-                                ret.Add(new IPAddress(ipb).ToString());
+                                ret.Add(new System.Net.IPAddress(ipb).ToString());
                             }
                         }
                         pos += len;
                     }
                 }
-            } catch { }
+            } catch {}
             return ret;
         }
 
@@ -116,21 +121,21 @@ namespace DNStoHOSTS
             }
         }
 
-        private dynamic ParseCfg() {
-            string s = "dns.google"; int p = 443; bool v4 = true, v6 = false;
+        private Cfg ParseCfg() {
+            var c = new Cfg();
             if (File.Exists(SettingsFile))
                 foreach (var l in File.ReadAllLines(SettingsFile)) {
                     var x = l.Split('='); if (x.Length != 2) continue;
                     var k = x[0].Trim().ToLower(); var v = x[1].Trim().ToLower();
-                    if (k == "server") s = v; else if (k == "port") int.TryParse(v, out p);
-                    else if (k == "ipv4") v4 = v == "true"; else if (k == "ipv6") v6 = v == "true";
+                    if (k == "server") c.s = v; else if (k == "port") int.TryParse(v, out c.p);
+                    else if (k == "ipv4") c.v4 = v == "true"; else if (k == "ipv6") c.v6 = v == "true";
                 }
-            return new { s, p, v4, v6 };
+            return c;
         }
 
-        private void BtnStop_Click(object sender, System.Windows.RoutedEventArgs e) => _cts?.Cancel();
-        private void BtnClear_Click(object sender, System.Windows.RoutedEventArgs e) => LogTextBox.Clear();
-        private void BtnTheme_Click(object sender, System.Windows.RoutedEventArgs e) { }
-        private void BtnFile_Click(object sender, System.Windows.RoutedEventArgs e) { }
+        private void BtnStop_Click(object s, RoutedEventArgs e) => _cts?.Cancel();
+        private void BtnClear_Click(object s, RoutedEventArgs e) => LogTextBox.Clear();
+        private void BtnTheme_Click(object s, RoutedEventArgs e) {}
+        private void BtnFile_Click(object s, RoutedEventArgs e) {}
     }
 }
