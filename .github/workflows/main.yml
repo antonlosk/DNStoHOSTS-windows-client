@@ -35,7 +35,7 @@ jobs:
         [int]$minor = $parts[1]
         [int]$patch = $parts[2]
 
-        # User Logic: 0.0.10 -> 0.1.0, 0.10.0 -> 1.0.0
+        # Custom versioning logic: 0.0.9 -> 0.0.10 -> 0.1.0, etc.
         if ($patch -lt 10) {
             $patch++
         } else {
@@ -53,7 +53,7 @@ jobs:
         echo "Calculated version: v$newVersion"
 
     - name: Restore NuGet packages
-      run: nuget restore DNStoHOSTS.sln
+      run: nuget restore DNStoHOSTS.csproj
 
     - name: Build Application
       run: |
@@ -64,7 +64,12 @@ jobs:
       run: |
         $exePath = "bin\Release\DNStoHOSTS.exe"
         $newName = "DNStoHOSTS_v${{ env.NEW_VERSION }}.exe"
-        Move-Item -Path $exePath -Destination "./$newName"
+        if (Test-Path $exePath) {
+            Move-Item -Path $exePath -Destination "./$newName"
+        } else {
+            Write-Error "Executable not found at $exePath"
+            exit 1
+        }
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
