@@ -1,0 +1,105 @@
+<Window x:Class="DNStoHOSTS.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DNStoHOSTS" Height="500" Width="700"
+        Background="{DynamicResource WindowBgColor}"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI">
+    
+    <Window.Resources>
+        <SolidColorBrush x:Key="WindowBgColor" Color="#1E1E1E"/>
+        <SolidColorBrush x:Key="LogBgColor" Color="#252526"/>
+        <SolidColorBrush x:Key="TextColor" Color="#D4D4D4"/>
+        <SolidColorBrush x:Key="ButtonBgColor" Color="#333333"/>
+        <SolidColorBrush x:Key="ButtonHoverColor" Color="#3E3E42"/>
+        <SolidColorBrush x:Key="BorderColor" Color="#3F3F46"/>
+
+        <SolidColorBrush x:Key="ProgressGray" Color="#808080"/>
+        <SolidColorBrush x:Key="ProgressBlue" Color="#0078D7"/>
+        <SolidColorBrush x:Key="ProgressGreen" Color="#10893E"/>
+
+        <Style x:Key="ModernScrollBar" TargetType="{x:Type ScrollBar}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="8"/>
+            <Setter Property="Template">
+                <ControlTemplate TargetType="{x:Type ScrollBar}">
+                    <Grid Background="{TemplateBinding Background}">
+                        <Track Name="PART_Track" IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border Background="{DynamicResource BorderColor}" CornerRadius="4" Margin="1,0,1,0"/>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ButtonBgColor}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextColor}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate TargetType="Button">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource ButtonHoverColor}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+            <Button Content="Start" Click="BtnStart_Click" Width="80"/>
+            <Button Content="Stop" Click="BtnStop_Click" Width="80"/>
+            <Button Content="Clear Log" Click="BtnClear_Click" Width="80"/>
+            <Border Width="1" Background="{DynamicResource BorderColor}" Margin="10,0" Height="25"/>
+            <Button Content="input.txt" Click="BtnFile_Click" Tag="input.txt"/>
+            <Button Content="settings.txt" Click="BtnFile_Click" Tag="settings.txt"/>
+            <Button Content="output.txt" Click="BtnFile_Click" Tag="output.txt"/>
+            <Border Width="1" Background="{DynamicResource BorderColor}" Margin="10,0" Height="25"/>
+            <Button Content="Toggle Theme" Click="BtnTheme_Click"/>
+        </StackPanel>
+
+        <TextBox x:Name="LogTextBox" Grid.Row="2" IsReadOnly="True" 
+                 Background="{DynamicResource LogBgColor}" 
+                 Foreground="{DynamicResource TextColor}"
+                 BorderBrush="{DynamicResource BorderColor}"
+                 BorderThickness="1"
+                 FontFamily="Consolas" FontSize="12"
+                 TextWrapping="No" VerticalScrollBarVisibility="Auto"
+                 HorizontalScrollBarVisibility="Auto">
+            <TextBox.Resources>
+                <Style TargetType="ScrollBar" BasedOn="{StaticResource ModernScrollBar}"/>
+            </TextBox.Resources>
+        </TextBox>
+
+        <ProgressBar x:Name="MainProgress" Grid.Row="3" Height="15" Margin="0,10,0,0" 
+                     Minimum="0" Maximum="100" Value="0" 
+                     Foreground="{DynamicResource ProgressGray}"
+                     Background="{DynamicResource LogBgColor}"
+                     BorderBrush="{DynamicResource BorderColor}"/>
+    </Grid>
+</Window>
