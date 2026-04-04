@@ -11,10 +11,11 @@ import (
 // ensureFilesExist creates default files if they are missing
 func ensureFilesExist() {
 	if _, err := os.Stat("input.txt"); os.IsNotExist(err) {
-		os.WriteFile("input.txt", []byte("# List domains here\ngoogle.com\n"), 0644)
+		// Updated default content for input.txt
+		os.WriteFile("input.txt", []byte("# Google\ngoogle.com\n"), 0644)
 	}
 	if _, err := os.Stat("settings.txt"); os.IsNotExist(err) {
-		// Default theme is black
+		// Default settings with black theme as requested
 		os.WriteFile("settings.txt", []byte("server=dns.google\nport=443\nipv4=true\nipv6=false\ntheme=black\n"), 0644)
 	}
 }
